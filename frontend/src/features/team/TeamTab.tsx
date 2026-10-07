@@ -6,8 +6,9 @@ import type { MemberRoleRequest } from '../../api/generated/MemberRoleRequest';
 import type { MembersResponse } from '../../api/generated/MembersResponse';
 import type { InvitationDto } from '../../api/generated/InvitationDto';
 import { Banner, Button, Card, CardBody, CardHeader, Dialog, FormField, Input, Select, StatusBadge, useToast } from '../../ui';
-import { useProjectContext } from '../projects/ProjectLayout';
-import { DateText, QueryState, usePermissions } from '../application/shared';
+import { useProjectContext } from '../projects/projectContext';
+import { DateText, QueryState } from '../application/shared';
+import { usePermissions } from '../application/permissions';
 
 export function TeamTab() {
   const { project } = useProjectContext(); const rights = usePermissions(); const query = useQueryClient(); const toast = useToast();

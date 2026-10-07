@@ -75,7 +75,7 @@ pub struct TemplateSchemaRequest {
 
 /// `PATCH /projects/{id}` — autosave. `version` is the optimistic-concurrency
 /// token the client loaded; mismatch → 409 `stale_version`.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "../../frontend/src/api/generated/")]
 pub struct PatchProjectRequest {
     pub version: i64,
@@ -84,15 +84,52 @@ pub struct PatchProjectRequest {
     pub keywords: Option<String>,
     pub organisation: Option<String>,
     /// Absent = keep; null = clear; string = set.
-    #[serde(default, deserialize_with = "double_option")]
-    #[ts(optional = nullable)]
+    #[ts(optional, type = "string | null")]
     pub start_date: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
-    #[ts(optional = nullable)]
+    #[ts(optional, type = "string | null")]
     pub end_date: Option<Option<String>>,
     /// Full replacement of the answers object when present.
     #[ts(optional, type = "Record<string, unknown>")]
     pub answers: Option<Value>,
+}
+
+// Keep serde's custom deserializer on a wire type: ts-rs cannot parse that
+// attribute, while the exported DTO needs optional nullable fields.
+#[derive(Deserialize)]
+struct PatchProjectRequestWire {
+    version: i64,
+    title: Option<String>,
+    summary: Option<String>,
+    keywords: Option<String>,
+    organisation: Option<String>,
+    /// Absent = keep; null = clear; string = set.
+    #[serde(default, deserialize_with = "double_option")]
+    start_date: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    end_date: Option<Option<String>>,
+    /// Full replacement of the answers object when present.
+    answers: Option<Value>,
+}
+
+impl<'de> Deserialize<'de> for PatchProjectRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        PatchProjectRequestWire::deserialize(deserializer).map(Into::into)
+    }
+}
+
+impl From<PatchProjectRequestWire> for PatchProjectRequest {
+    fn from(wire: PatchProjectRequestWire) -> Self {
+        Self {
+            version: wire.version,
+            title: wire.title,
+            summary: wire.summary,
+            keywords: wire.keywords,
+            organisation: wire.organisation,
+            start_date: wire.start_date,
+            end_date: wire.end_date,
+            answers: wire.answers,
+        }
+    }
 }
 
 /// `PATCH /projects/{id}` autosave response — the new optimistic `version`.
@@ -504,31 +541,94 @@ pub struct CreateDecisionRequest {
     pub document_version_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "../../frontend/src/api/generated/")]
 pub struct PatchDecisionRequest {
     pub kind: Option<String>,
     pub project_revision_id: Option<String>,
     pub basis: Option<String>,
     pub legal_reference: Option<String>,
-    #[serde(default, deserialize_with = "double_option")]
-    #[ts(optional = nullable)]
+    #[ts(optional, type = "string | null")]
     pub valid_from: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
-    #[ts(optional = nullable)]
+    #[ts(optional, type = "string | null")]
     pub valid_to: Option<Option<String>>,
     pub permitted_activities: Option<Vec<String>>,
     pub conditions: Option<Vec<String>>,
     pub restrictions: Option<Vec<String>>,
-    #[serde(default, deserialize_with = "double_option")]
-    #[ts(optional = nullable)]
+    #[ts(optional, type = "string | null")]
     pub supersedes_id: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
-    #[ts(optional = nullable)]
+    #[ts(optional, type = "string | null")]
     pub change_request_id: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
-    #[ts(optional = nullable)]
+    #[ts(optional, type = "string | null")]
     pub document_version_id: Option<Option<String>>,
+}
+
+// See PatchProjectRequestWire: preserve absent/null/value without ts-rs warnings.
+#[derive(Deserialize)]
+struct PatchDecisionRequestWire {
+    kind: Option<String>,
+    project_revision_id: Option<String>,
+    basis: Option<String>,
+    legal_reference: Option<String>,
+    #[serde(default, deserialize_with = "double_option")]
+    valid_from: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    valid_to: Option<Option<String>>,
+    permitted_activities: Option<Vec<String>>,
+    conditions: Option<Vec<String>>,
+    restrictions: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    supersedes_id: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    change_request_id: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    document_version_id: Option<Option<String>>,
+}
+
+impl<'de> Deserialize<'de> for PatchDecisionRequest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        PatchDecisionRequestWire::deserialize(deserializer).map(Into::into)
+    }
+}
+
+impl From<PatchDecisionRequestWire> for PatchDecisionRequest {
+    fn from(wire: PatchDecisionRequestWire) -> Self {
+        Self {
+            kind: wire.kind,
+            project_revision_id: wire.project_revision_id,
+            basis: wire.basis,
+            legal_reference: wire.legal_reference,
+            valid_from: wire.valid_from,
+            valid_to: wire.valid_to,
+            permitted_activities: wire.permitted_activities,
+            conditions: wire.conditions,
+            restrictions: wire.restrictions,
+            supersedes_id: wire.supersedes_id,
+            change_request_id: wire.change_request_id,
+            document_version_id: wire.document_version_id,
+        }
+    }
+}
+
+#[cfg(test)]
+mod double_option_tests {
+    use super::{PatchDecisionRequest, PatchProjectRequest};
+
+    #[test]
+    fn patch_dates_distinguish_absent_null_and_value() {
+        let absent: PatchProjectRequest = serde_json::from_str(r#"{"version":1}"#).unwrap();
+        let clear: PatchProjectRequest =
+            serde_json::from_str(r#"{"version":1,"start_date":null}"#).unwrap();
+        let set: PatchProjectRequest =
+            serde_json::from_str(r#"{"version":1,"start_date":"2027-01-01"}"#).unwrap();
+        assert_eq!(absent.start_date, None);
+        assert_eq!(clear.start_date, Some(None));
+        assert_eq!(set.start_date, Some(Some("2027-01-01".into())));
+
+        let clear_decision: PatchDecisionRequest =
+            serde_json::from_str(r#"{"valid_to":null}"#).unwrap();
+        assert_eq!(clear_decision.valid_to, Some(None));
+    }
 }
 
 // ---------------------------------------------------------------------------

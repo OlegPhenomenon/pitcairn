@@ -6,7 +6,7 @@ import { ShieldCheck } from 'lucide-react';
 import { fieldError } from '../../api/client';
 import { Banner, Button, FormField, Input } from '../../ui';
 import { useMe, useMfaVerify } from './api';
-import { safeNext } from './guards';
+import { safeNext } from './guardUtils';
 import { AuthShell } from './AuthShell';
 import { useDemoTotp } from '../demo/api';
 import { PageLoading } from '../../ui';

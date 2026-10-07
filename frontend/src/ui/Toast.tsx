@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useMemo,
   useRef,
   useState,
@@ -11,37 +9,7 @@ import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
 
 import { cx } from '../lib/cx';
 
-export type ToastTone = 'info' | 'success' | 'error';
-
-export interface ToastItem {
-  id: number;
-  tone: ToastTone;
-  title: string;
-  body?: string;
-}
-
-interface ToastCtx {
-  push: (t: Omit<ToastItem, 'id'>) => void;
-  success: (title: string, body?: string) => void;
-  error: (title: string, body?: string) => void;
-  info: (title: string, body?: string) => void;
-}
-
-const ToastContext = createContext<ToastCtx | null>(null);
-
-export function useToast(): ToastCtx {
-  const ctx = useContext(ToastContext);
-  if (!ctx) {
-    // Outside a provider (e.g. tests): no-op toasts.
-    return {
-      push: () => undefined,
-      success: () => undefined,
-      error: () => undefined,
-      info: () => undefined,
-    };
-  }
-  return ctx;
-}
+import { ToastContext, type ToastCtx, type ToastItem, type ToastTone } from './toastContext';
 
 const toneStyles: Record<ToastTone, { icon: ReactNode; bar: string }> = {
   info: { icon: <Info className="size-5 text-blue-700" aria-hidden />, bar: 'border-l-blue-600' },

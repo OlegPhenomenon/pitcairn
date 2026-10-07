@@ -4,11 +4,11 @@
  * `PATCH /projects/{id}` — autosave. `version` is the optimistic-concurrency
  * token the client loaded; mismatch → 409 `stale_version`.
  */
-export type PatchProjectRequest = { version: bigint, title: string | null, summary: string | null, keywords: string | null, organisation: string | null, 
+export type PatchProjectRequest = { version: bigint, title: string | null, summary: string | null, keywords: string | null, organisation: string | null,
 /**
  * Absent = keep; null = clear; string = set.
  */
-start_date?: string | null | null, end_date?: string | null | null, 
+start_date?: string | null, end_date?: string | null,
 /**
  * Full replacement of the answers object when present.
  */

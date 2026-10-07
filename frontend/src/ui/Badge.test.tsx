@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { STATUS_MAP, StatusBadge } from './Badge';
+import { STATUS_MAP, StatusBadge } from './index';
 
 describe('StatusBadge', () => {
   it('uses clear labels and expected tones for key states', () => {

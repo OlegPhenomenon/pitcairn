@@ -16,7 +16,7 @@ import {
   useToast,
 } from "../../ui";
 import { useMe } from "../auth/api";
-import { dateRange } from "../resources/display";
+import { DateRange } from "../resources/display";
 import { useConfirmBooking, useDeclineBooking } from "../trips/api";
 export function ProviderPage() {
   const me = useMe();
@@ -78,7 +78,7 @@ export function ProviderPage() {
                 <>
                   {b.resource_name}
                   <span className="block">
-                    {dateRange(b.start_date, b.end_date)}
+                    <DateRange start={b.start_date} end={b.end_date} />
                   </span>
                 </>
               ),

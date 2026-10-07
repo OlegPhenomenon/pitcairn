@@ -23,7 +23,8 @@ import {
   useToast,
 } from "../../ui";
 import { useMe } from "../auth/api";
-import { dateRange, money } from "../resources/display";
+import { DateRange } from "../resources/display";
+import { money } from '../resources/displayFormat';
 import {
   getInvoices,
   useCancelInvoice,
@@ -191,7 +192,7 @@ export function FinancePage() {
                       }
                     />
                     {b.resource_name} · {b.trip} ·{" "}
-                    {dateRange(b.start_date, b.end_date)}
+                    <DateRange start={b.start_date} end={b.end_date} />
                   </label>
                 ))}
                 <Button

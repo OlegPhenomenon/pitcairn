@@ -3,9 +3,10 @@ import { Plus } from "lucide-react";
 import { useApiQuery } from "../../api/client";
 import type { DashboardResponse } from "../../api/types";
 import { formatDate } from "../../lib/format";
+import { decisionKindLabel } from "../../lib/decisionKind";
 import {
   Banner,
-  Button,
+  ButtonLink,
   Card,
   CardBody,
   CardHeader,
@@ -50,9 +51,7 @@ export function DashboardPage() {
         subtitle="Your work and what needs attention."
         actions={
           canCreate && (
-            <Link to="/app/projects/new">
-              <Button icon={<Plus className="size-4" />}>New project</Button>
-            </Link>
+            <ButtonLink to="/app/projects/new"><Plus className="size-4" aria-hidden />New project</ButtonLink>
           )
         }
       />
@@ -88,9 +87,9 @@ export function DashboardPage() {
                               to={item.link}
                               className="font-medium text-teal-800 hover:underline"
                             >
-                              {moneyText(item.title)}
+                              {item.kind === 'decision' ? decisionKindLabel(item.title.split(' — ')[0]) + ' — ' + item.title.split(' — ').slice(1).join(' — ') : moneyText(item.title)}
                             </Link>
-                            <p className="text-sm text-slate-600">
+                            {item.subtitle && <p className="text-sm text-slate-600">
                               {item.kind === "project" &&
                               item.subtitle.startsWith("status: ") ? (
                                 <StatusBadge
@@ -104,7 +103,7 @@ export function DashboardPage() {
                               ) : (
                                 moneyText(item.subtitle)
                               )}
-                            </p>
+                            </p>}
                             <div className="mt-1 flex gap-2 text-xs text-slate-500">
                               {item.project_reference && (
                                 <span>{item.project_reference}</span>
@@ -117,6 +116,7 @@ export function DashboardPage() {
                                   Due {formatDate(item.due_date)}
                                 </time>
                               )}
+                              {item.valid_until && <time dateTime={item.valid_until} title={item.valid_until}>Valid until {formatDate(item.valid_until)}</time>}
                               {item.kind === "decision" && (
                                 <StatusBadge
                                   status="issued"

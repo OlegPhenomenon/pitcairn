@@ -21,7 +21,7 @@ import {
 import { DocumentSlot } from '../upload/DocumentSlot';
 import { FileUpload } from '../upload/FileUpload';
 import { projectDocsKey, useCreateDocument, useProjectDocuments } from './api';
-import { useProjectContext } from './ProjectLayout';
+import { useProjectContext } from './projectContext';
 import { ProjectTools } from '../results/ProjectTools';
 
 const DOC_CATEGORIES = ['application', 'personal', 'decision', 'result', 'other'];

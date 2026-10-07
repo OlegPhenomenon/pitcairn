@@ -23,7 +23,7 @@ import {
 } from "../../ui";
 import { useMe } from "../auth/api";
 import { getInvoices } from "../finance/api";
-import { money } from "../resources/display";
+import { money } from '../resources/displayFormat';
 export function BankPage() {
   const me = useMe();
   const allowed =

@@ -18,7 +18,7 @@ import {
   useToast,
 } from "../../ui";
 import { useProject } from "../projects/api";
-import { useProjectContext } from "../projects/ProjectLayout";
+import { useProjectContext } from "../projects/projectContext";
 import { useSampleAction, useSamples } from "./api";
 export function SamplesTab() {
   const { project, me } = useProjectContext();

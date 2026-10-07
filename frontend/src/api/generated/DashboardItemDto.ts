@@ -3,4 +3,4 @@
 /**
  * One item in a dashboard section (§5).
  */
-export type DashboardItemDto = { kind: string, title: string, subtitle: string, project_id: string | null, project_reference: string | null, due_date: string | null, link: string, };
+export type DashboardItemDto = { kind: string, title: string, subtitle: string, project_id: string | null, project_reference: string | null, due_date: string | null, valid_until: string | null, link: string, };

@@ -6,7 +6,7 @@ import QRCode from 'qrcode';
 import { ApiError, fieldError } from '../../api/client';
 import { Banner, Button, FormField, Input, PageLoading } from '../../ui';
 import { useMe, useMfaEnroll, useMfaEnrollConfirm } from './api';
-import { safeNext } from './guards';
+import { safeNext } from './guardUtils';
 import { AuthShell } from './AuthShell';
 
 /**

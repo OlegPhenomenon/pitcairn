@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import { Anchor } from "lucide-react";
 import { MapContainer, Marker, Polygon, Popup, TileLayer } from "react-leaflet";
+import '../../lib/leafletIcons';
 import { useApiQuery, listQuery } from "../../api/client";
 import type { ListResponse, PublicProjectDto } from "../../api/types";
 import { toNum } from "../../lib/format";

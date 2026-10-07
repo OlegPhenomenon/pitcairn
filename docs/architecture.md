@@ -252,7 +252,7 @@ Anna's "Coral health around Pitcairn" starts as a **draft** ready to submit, so 
 
 ## 10. Frontend structure
 
-Routes: `/` landing, `/catalog`, `/catalog/:reference`, `/login`, `/register`, `/mfa`, `/invite/:token`, `/app` dashboard (role-aware), `/app/projects/:id/{overview|application|team|messages|review|decisions|trips|invoices|results|samples|sites|history|changes}`, `/app/search`, `/app/reports`, `/app/calendar`, `/app/finance`, `/app/provider`, `/app/reviews`, `/app/admin/{users|templates|resources|settings|jobs|import|audit}`, `/app/demo/{mailbox|bank|story}`.
+Routes: `/` landing, `/catalog`, `/catalog/:reference`, `/login`, `/demo` (anonymous persona picker in demo mode), `/demo/story` (public story guide in demo mode), `/register`, `/mfa`, `/invite/:token`, `/app` dashboard (role-aware), `/app/projects/:id/{overview|application|team|messages|review|decisions|trips|invoices|results|samples|sites|history|changes}`, `/app/search`, `/app/reports`, `/app/calendar`, `/app/finance`, `/app/provider`, `/app/reviews`, `/app/admin/{users|templates|resources|settings|jobs|import|audit}`, `/app/demo/{mailbox|bank|story}`.
 
 Requirements: mobile-first responsive layout; full keyboard operation (visible focus, skip link, proper labels, dialogs trap focus, Esc closes); clear inline errors from `error.fields`; autosave of drafts (debounced PATCH, "Saved 10:42" indicator, works after reconnect); project workspace headline shows `primary_message` ("Maria asks you to add a description of observation sites") with the anchored item and a reply button; never show a bare "Approved" — show the decision with conditions.
 

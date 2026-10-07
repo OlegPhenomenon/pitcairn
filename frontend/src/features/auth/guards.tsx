@@ -1,37 +1,11 @@
 import type { ReactNode } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router';
 
-import type { MeResponse } from '../../api/types';
 import { PageLoading } from '../../ui/Skeleton';
 import { Card, CardBody, EmptyState } from '../../ui';
 import { useMe } from './api';
 
-export const STAFF_ROLES = [
-  'coordinator',
-  'decision_maker',
-  'base_manager',
-  'finance',
-  'admin',
-] as const;
-
-export function isStaffOrExpert(me: MeResponse | undefined): boolean {
-  if (!me) return false;
-  return me.user.roles.some(
-    (r) => (STAFF_ROLES as readonly string[]).includes(r) || r === 'expert',
-  );
-}
-
-/** Staff/expert sessions must be MFA-verified before touching the app. */
-export function needsMfa(me: MeResponse | undefined): boolean {
-  return isStaffOrExpert(me) && !me?.mfa_verified;
-}
-
-export function safeNext(raw: string | null | undefined, fallback = '/app'): string {
-  if (!raw) return fallback;
-  // Only allow same-origin absolute paths.
-  if (!raw.startsWith('/') || raw.startsWith('//')) return fallback;
-  return raw;
-}
+import { needsMfa } from './guardUtils';
 
 /** Session required, MFA not necessarily verified yet (used by /mfa pages). */
 export function RequireSession({ children }: { children?: ReactNode }) {

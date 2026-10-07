@@ -7,8 +7,9 @@ import type { CreateThreadRequest } from '../../api/generated/CreateThreadReques
 import type { PostMessageRequest } from '../../api/generated/PostMessageRequest';
 import type { ThreadDto } from '../../api/generated/ThreadDto';
 import { Banner, Button, Card, CardBody, CardHeader, Checkbox, FormField, Input, Select, StatusBadge, Textarea, useToast } from '../../ui';
-import { useProjectContext } from '../projects/ProjectLayout';
-import { DateText, QueryState, usePermissions } from '../application/shared';
+import { useProjectContext } from '../projects/projectContext';
+import { DateText, QueryState } from '../application/shared';
+import { usePermissions } from '../application/permissions';
 
 export function MessagesTab() {
   const { project } = useProjectContext(); const rights = usePermissions(); const [params] = useSearchParams(); const query = useQueryClient(); const toast = useToast();

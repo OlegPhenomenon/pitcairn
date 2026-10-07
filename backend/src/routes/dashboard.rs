@@ -48,6 +48,7 @@ fn item(
         project_id,
         project_reference,
         due_date,
+        valid_until: None,
         link,
     }
 }
@@ -218,19 +219,21 @@ async fn researcher_sections(
         rows.into_iter()
             .map(|r| {
                 let pid = r.project_id.clone().unwrap_or_default();
-                item(
+                let mut decision = item(
                     "decision",
                     format!(
                         "{} — {}",
                         r.extra.unwrap_or_default(),
                         r.project_title.clone().unwrap_or_default()
                     ),
-                    "issued decision".to_string(),
+                    "".to_string(),
                     Some(pid.clone()),
                     r.reference,
-                    r.due,
+                    None,
                     format!("/app/projects/{pid}/decisions"),
-                )
+                );
+                decision.valid_until = r.due;
+                decision
             })
             .collect(),
     );

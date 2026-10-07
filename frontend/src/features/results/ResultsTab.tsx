@@ -34,7 +34,7 @@ import {
   useProjectDocuments,
 } from "../projects/api";
 import { useProject, projectKey } from "../projects/api";
-import { useProjectContext } from "../projects/ProjectLayout";
+import { useProjectContext } from "../projects/projectContext";
 import {
   useCloseProject,
   useCreateDeliverable,
