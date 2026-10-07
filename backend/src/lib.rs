@@ -91,17 +91,25 @@ pub fn build_app(state: AppState) -> axum::Router {
         ));
 
     let static_dir = state.config.static_dir.clone();
-    let spa = tower_http::services::ServeDir::new(&static_dir).not_found_service(
+    // `fallback` (unlike `not_found_service`) keeps index.html's 200 status for client-side routes.
+    let spa = tower_http::services::ServeDir::new(&static_dir).fallback(
         tower_http::services::ServeFile::new(static_dir.join("index.html")),
     );
+    // Hashed build assets must 404 when missing (stale chunks after a deploy), never get index.html.
+    let assets = tower_http::services::ServeDir::new(&static_dir);
     let spa_fallback = tower::service_fn(move |req: Request<Body>| {
         let mut spa = spa.clone();
+        let mut assets = assets.clone();
         async move {
             if req.uri().path().starts_with("/api/") {
                 return Ok(AppError::NotFound.into_response());
             }
             use tower::Service;
-            let resp = spa.call(req).await.expect("ServeDir is infallible");
+            let resp = if req.uri().path().starts_with("/assets/") {
+                assets.call(req).await.expect("ServeDir is infallible")
+            } else {
+                spa.call(req).await.expect("ServeDir is infallible")
+            };
             Ok(resp.map(Body::new))
         }
     });
