@@ -5,6 +5,8 @@ import { OverviewTab } from './OverviewTab';
 import { ComingSoonTab, ProjectLayout } from './ProjectLayout';
 import { TripsTab } from '../trips/TripsTab';
 import { InvoicesTab } from '../finance/InvoicesTab';
+import { ResultsTab } from '../results/ResultsTab';
+import { SamplesTab } from '../samples/SamplesTab';
 
 const comingSoon = (area: string) => <ComingSoonTab area={area} />;
 
@@ -23,8 +25,8 @@ export const projectRoutes: RouteObject[] = [
       { path: 'decisions', element: comingSoon('decisions') },
       { path: 'trips', element: <TripsTab /> },
       { path: 'invoices', element: <InvoicesTab /> },
-      { path: 'results', element: comingSoon('deliverables and results') },
-      { path: 'samples', element: comingSoon('samples') },
+      { path: 'results', element: <ResultsTab /> },
+      { path: 'samples', element: <SamplesTab /> },
       { path: 'sites', element: comingSoon('sites map') },
       { path: 'history', element: comingSoon('project history') },
       { path: 'changes', element: comingSoon('change requests') },

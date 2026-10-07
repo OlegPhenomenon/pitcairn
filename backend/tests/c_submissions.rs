@@ -9,6 +9,64 @@ use common::{persona, spawn_app};
 const ANNA: &str = "anna@demo.pitcairn.invalid";
 const MARIA: &str = "maria@demo.pitcairn.invalid";
 
+#[tokio::test]
+async fn researcher_can_choose_active_coordinator_for_first_deliverable() {
+    let app = spawn_app(true).await;
+    let anna = persona(&app, "anna").await;
+    let response = anna.get("/api/v1/coordinators").await;
+    assert_eq!(response.status(), 200);
+    let list: pitcairn::dto::ListResponse<pitcairn::dto::CoordinatorDto> =
+        anna.json(response).await;
+    assert!(list.items.iter().any(|user| user.name == "Maria Ellis"));
+}
+
+#[tokio::test]
+async fn submission_history_is_visible_to_project_team() {
+    let app = spawn_app(true).await;
+    let (anna, maria, _project, did) = dataset_setup(&app).await;
+    let first = submit(&anna, &did, serde_json::json!({
+        "links": [{"url": "https://example.org/first", "description": "First", "version_label": "v1"}]
+    })).await;
+    let response = maria
+        .post_json(
+            &format!("/api/v1/submissions/{}/request-changes", first.id),
+            &serde_json::json!({"note": "Add a method note"}),
+        )
+        .await;
+    assert_eq!(response.status(), 200);
+    let second = submit(&anna, &did, serde_json::json!({
+        "links": [{"url": "https://example.org/second", "description": "Second", "version_label": "v2"}]
+    })).await;
+    let response = anna
+        .get(&format!("/api/v1/deliverables/{did}/submissions"))
+        .await;
+    assert_eq!(response.status(), 200);
+    let history: pitcairn::dto::ListResponse<pitcairn::dto::SubmissionDto> =
+        anna.json(response).await;
+    assert_eq!(history.total, 2);
+    assert_eq!(history.items[0].id, second.id);
+    assert_eq!(
+        history.items[1].review_note.as_deref(),
+        Some("Add a method note")
+    );
+}
+
+#[tokio::test]
+async fn only_coordinator_can_read_publication_file_selection() {
+    let app = spawn_app(true).await;
+    let (anna, maria, _project, did) = dataset_setup(&app).await;
+    let response = anna
+        .get(&format!("/api/v1/deliverables/{did}/publication-files"))
+        .await;
+    assert_eq!(response.status(), 403);
+    let response = maria
+        .get(&format!("/api/v1/deliverables/{did}/publication-files"))
+        .await;
+    assert_eq!(response.status(), 200);
+    let files: pitcairn::dto::PublicationFilesResponse = maria.json(response).await;
+    assert!(files.document_version_ids.is_empty());
+}
+
 async fn dataset_setup(app: &common::TestApp) -> (common::Client, common::Client, String, String) {
     let anna = persona(app, "anna").await;
     let maria = persona(app, "maria").await;

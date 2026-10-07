@@ -11,7 +11,7 @@ use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
-use axum::routing::{get, patch, post, put};
+use axum::routing::{get, patch, post};
 use serde_json::{Value, json};
 use sqlx::{FromRow, SqlitePool};
 
@@ -20,7 +20,7 @@ use crate::authz::{self, Actor, ProjectAccess};
 use crate::db;
 use crate::deliverables::{self, OPEN_STATUSES, PUBLICATION_WARNING};
 use crate::dto::{
-    AcceptSubmissionResponse, CloseProjectRequest, CreateDeliverableRequest,
+    AcceptSubmissionResponse, CloseProjectRequest, CoordinatorDto, CreateDeliverableRequest,
     CreateSubmissionRequest, DeliverableDto, ExternalLinkDto, ListQuery, ListResponse, NoteRequest,
     PublicationFilesResponse, PublicationUpdateResponse, ResultsSectionDto, SampleDto,
     SetPublicationFilesRequest, SubmissionDto, SubmissionFileDto, UnresolvedDeliverableDto,
@@ -35,6 +35,7 @@ const KINDS: [&str; 5] = ["report", "dataset", "media", "samples", "other"];
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/coordinators", get(list_coordinators))
         .route(
             "/projects/{id}/deliverables",
             get(list_deliverables).post(create_deliverable),
@@ -44,11 +45,14 @@ pub fn router() -> Router<AppState> {
         .route("/deliverables/{id}/agree", post(agree_deliverable))
         .route("/deliverables/{id}/waive", post(waive_deliverable))
         .route("/deliverables/{id}/cancel", post(cancel_deliverable))
-        .route("/deliverables/{id}/submissions", post(create_submission))
+        .route(
+            "/deliverables/{id}/submissions",
+            get(list_submissions).post(create_submission),
+        )
         .route("/deliverables/{id}/publication", patch(update_publication))
         .route(
             "/deliverables/{id}/publication-files",
-            put(set_publication_files),
+            get(get_publication_files).put(set_publication_files),
         )
         .route("/submissions/{id}/request-changes", post(request_changes))
         .route("/submissions/{id}/accept", post(accept_submission))
@@ -58,6 +62,45 @@ pub fn router() -> Router<AppState> {
             get(list_samples).post(create_sample),
         )
         .route("/samples/{id}", patch(patch_sample).delete(delete_sample))
+}
+
+async fn get_publication_files(
+    State(state): State<AppState>,
+    actor: Actor,
+    Path(deliverable_id): Path<String>,
+) -> AppResult<Json<PublicationFilesResponse>> {
+    require_coordinator(&actor).await?;
+    let _ = load_deliverable(&state.pool, &deliverable_id).await?;
+    let document_version_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT document_version_id FROM publication_files WHERE deliverable_id = ?",
+    )
+    .bind(&deliverable_id)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(PublicationFilesResponse {
+        document_version_ids,
+        warning: PUBLICATION_WARNING.into(),
+    }))
+}
+
+// Researchers need a recipient ID when proposing the first deliverable on a
+// project. The admin user list is intentionally unavailable to them.
+async fn list_coordinators(
+    State(state): State<AppState>,
+    _actor: Actor,
+) -> AppResult<Json<ListResponse<CoordinatorDto>>> {
+    let items: Vec<CoordinatorDto> = sqlx::query_as::<_, (String, String)>(
+        "SELECT DISTINCT u.id, u.name FROM users u JOIN user_roles r ON r.user_id = u.id
+         WHERE r.role = 'coordinator' AND r.revoked_at IS NULL AND u.disabled_at IS NULL
+         ORDER BY u.name",
+    )
+    .fetch_all(&state.pool)
+    .await?
+    .into_iter()
+    .map(|(id, name)| CoordinatorDto { id, name })
+    .collect();
+    let total = items.len() as i64;
+    Ok(Json(ListResponse { items, total }))
 }
 
 // ---------------------------------------------------------------------------
@@ -928,6 +971,42 @@ async fn cancel_deliverable(
 // ---------------------------------------------------------------------------
 // POST /deliverables/{id}/submissions — team editor+
 // ---------------------------------------------------------------------------
+
+async fn list_submissions(
+    State(state): State<AppState>,
+    actor: Actor,
+    Path(deliverable_id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<ListQuery>,
+) -> AppResult<Json<ListResponse<SubmissionDto>>> {
+    let deliverable = load_deliverable(&state.pool, &deliverable_id).await?;
+    let access = authz::project_access(&state.pool, &actor, &deliverable.project_id).await?;
+    if access == ProjectAccess::None {
+        return Err(AppError::forbidden(
+            "you do not have access to this project",
+        ));
+    }
+    let total: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM deliverable_submissions WHERE deliverable_id = ?")
+            .bind(&deliverable_id)
+            .fetch_one(&state.pool)
+            .await?;
+    let rows: Vec<SubmissionRow> = sqlx::query_as(
+        "SELECT id, deliverable_id, number, submitted_by, note, data_dictionary_json,
+                status, reviewed_by, review_note, reviewed_at, created_at
+         FROM deliverable_submissions WHERE deliverable_id = ?
+         ORDER BY number DESC LIMIT ? OFFSET ?",
+    )
+    .bind(&deliverable_id)
+    .bind(query.limit())
+    .bind(query.offset())
+    .fetch_all(&state.pool)
+    .await?;
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        items.push(submission_dto(&state.pool, row).await?);
+    }
+    Ok(Json(ListResponse { items, total }))
+}
 
 async fn create_submission(
     State(state): State<AppState>,

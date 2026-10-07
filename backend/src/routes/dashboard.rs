@@ -270,7 +270,7 @@ async fn researcher_sections(
         "SELECT i.id, i.project_id, p.title AS project_title, p.reference,
                 i.due_date AS due,
                 (i.number || ' · ' || i.currency || ' ' ||
-                    CAST(COALESCE((SELECT SUM(amount_cents) FROM invoice_lines WHERE invoice_id = i.id),0)/100 AS TEXT)) AS extra
+                    CAST(COALESCE((SELECT SUM(amount_cents) FROM invoice_lines WHERE invoice_id = i.id),0)/100.0 AS TEXT)) AS extra
          FROM invoices i
          JOIN projects p ON p.id = i.project_id
          JOIN project_members pm ON pm.project_id = p.id
@@ -680,7 +680,7 @@ async fn finance_sections(
     let rows: Vec<DashRow> = sqlx::query_as(
         "SELECT i.id, i.project_id, p.title AS project_title, p.reference,
                 i.due_date AS due,
-                ('NZD ' || CAST(COALESCE((SELECT SUM(amount_cents) FROM invoice_lines WHERE invoice_id = i.id),0)/100 AS TEXT)) AS extra
+                ('NZD ' || CAST(COALESCE((SELECT SUM(amount_cents) FROM invoice_lines WHERE invoice_id = i.id),0)/100.0 AS TEXT)) AS extra
          FROM invoices i JOIN projects p ON p.id = i.project_id
          WHERE i.status = 'draft'
          ORDER BY i.created_at LIMIT 50",
@@ -708,7 +708,7 @@ async fn finance_sections(
     let rows: Vec<DashRow> = sqlx::query_as(
         "SELECT py.id, i.project_id, p.title AS project_title, p.reference,
                 NULL AS due,
-                (i.number || ' · ' || py.currency || ' ' || CAST(py.amount_cents/100 AS TEXT)
+                (i.number || ' · ' || py.currency || ' ' || CAST(py.amount_cents/100.0 AS TEXT)
                   || ' · ' || py.method) AS extra
          FROM payments py
          JOIN invoices i ON i.id = py.invoice_id

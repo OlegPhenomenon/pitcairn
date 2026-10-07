@@ -215,6 +215,7 @@ export function LandingPage() {
                 and antivirus are simulated.
               </p>
               <div className="mt-4">
+                <Link to="/app/demo/story" className="mr-3 text-sm font-semibold text-teal-800 underline">Open the story guide</Link>
                 <Link to="/login">
                   <Button>Log in and pick a persona</Button>
                 </Link>

@@ -78,7 +78,7 @@ export function ProjectLayout() {
             {me.data?.demo_mode && ' · demo'}
           </>
         }
-        actions={<StatusBadge status={p.status} className="text-sm" />}
+        actions={<StatusBadge status={p.status} label={p.status === 'approved' ? 'Permit approved — see decision conditions' : undefined} className="text-sm" />}
       />
       {project.data.primary_message && (
         <Banner tone="warning" className="mb-4">

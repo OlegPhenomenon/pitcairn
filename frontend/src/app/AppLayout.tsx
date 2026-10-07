@@ -23,16 +23,21 @@ function navItems(me: MeResponse): NavItem[] {
     { to: '/catalog', label: 'Catalog', icon: <Globe2 className="size-4" /> },
   ];
   if (me.demo_mode) {
+    items.push({ to: '/app/demo/story', label: 'Story guide' });
     items.push({ to: '/app/demo/mailbox', label: 'Demo mailbox', icon: <Mail className="size-4" /> });
     if (me.user.roles.includes('finance')) items.push({ to: '/app/demo/bank', label: 'Bank simulator' });
   }
   if (me.user.roles.some(r => ['base_manager', 'coordinator'].includes(r))) items.push({ to: '/app/calendar', label: 'Calendar' });
   if (me.user.roles.includes('provider')) items.push({ to: '/app/provider', label: 'Provider bookings' });
   if (me.user.roles.includes('finance')) items.push({ to: '/app/finance', label: 'Finance' });
+  if (me.user.roles.some(r => ['coordinator','decision_maker','base_manager','finance','admin','expert'].includes(r))) items.push({ to: '/app/search', label: 'Search' });
+  if (me.user.roles.some(r => ['coordinator','decision_maker','base_manager','finance','admin'].includes(r))) items.push({ to: '/app/reports', label: 'Reports' });
   return items;
 }
 
 const ADMIN_ITEMS: NavItem[] = [
+  { to: '/app/admin/templates', label: 'Templates' },
+  { to: '/app/admin/import', label: 'Import' },
   { to: '/app/admin/users', label: 'Users' },
   { to: '/app/admin/resources', label: 'Resources & tariffs' },
   { to: '/app/admin/settings', label: 'Settings' },
@@ -266,7 +271,7 @@ export function AppLayout() {
       {me.data.demo_mode && (
         <div className="border-b border-teal-200 bg-teal-50 px-4 py-2 text-center text-sm text-teal-950">
           Demo — fictional people and data. Do not upload real applications or personal
-          documents.
+          documents. <Link to="/app/demo/story" className="font-semibold underline">Open the story guide</Link>.
         </div>
       )}
 
