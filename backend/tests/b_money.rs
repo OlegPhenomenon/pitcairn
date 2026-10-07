@@ -21,11 +21,16 @@ async fn reload(client: &common::Client, project_id: &str, invoice_id: &str) -> 
         .expect("invoice listed")
 }
 
+/// Payments on the fixture project (the demo seed has its own invoices).
 async fn payment_count(app: &common::TestApp) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM payments")
-        .fetch_one(&app.pool)
-        .await
-        .unwrap()
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM payments WHERE invoice_id IN
+         (SELECT i.id FROM invoices i JOIN projects p ON p.id = i.project_id
+          WHERE p.title = 'Coral health around Pitcairn')",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap()
 }
 
 #[tokio::test]

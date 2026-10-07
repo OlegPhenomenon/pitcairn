@@ -41,6 +41,26 @@ enum Command {
     },
     /// Export TypeScript bindings for all API DTOs.
     ExportTypes,
+    /// Back up the database (VACUUM INTO) and stored files into DIR.
+    Backup {
+        #[arg(long)]
+        out: std::path::PathBuf,
+    },
+    /// Restore a backup into the (empty) data dir; `--force` overwrites.
+    Restore {
+        #[arg(long)]
+        from: std::path::PathBuf,
+        #[arg(long)]
+        force: bool,
+    },
+    /// Export one project (by reference) as a ZIP archive.
+    ExportProject {
+        reference: String,
+        #[arg(long)]
+        out: std::path::PathBuf,
+    },
+    /// Import a project ZIP archive exported by another installation.
+    ImportProject { file: std::path::PathBuf },
 }
 
 #[tokio::main]
@@ -95,6 +115,67 @@ async fn main() -> AppResult<()> {
             db::migrate(&pool).await?;
             seed::grant_role(&pool, &email, &role).await?;
             println!("granted {role} to {email}");
+            Ok(())
+        }
+        Command::Backup { out } => {
+            config.prepare()?;
+            let pool = db::connect(&config.db_path()).await?;
+            db::migrate(&pool).await?;
+            let manifest = pitcairn::backup::backup(&pool, &config.data_dir, &out).await?;
+            println!(
+                "backup written to {} ({} tables, {} files)",
+                out.display(),
+                manifest.row_counts.len(),
+                manifest.files.len()
+            );
+            Ok(())
+        }
+        Command::Restore { from, force } => {
+            std::fs::create_dir_all(&config.data_dir)?;
+            let manifest = pitcairn::backup::restore(&from, &config.data_dir, force).await?;
+            println!(
+                "restored {} into {} (hashes verified, {} files)",
+                from.display(),
+                config.data_dir.display(),
+                manifest.files.len()
+            );
+            Ok(())
+        }
+        Command::ExportProject { reference, out } => {
+            config.prepare()?;
+            let pool = db::connect(&config.db_path()).await?;
+            db::migrate(&pool).await?;
+            let export =
+                pitcairn::archive::export_by_reference(&pool, &config.data_dir, &reference).await?;
+            std::fs::write(&out, &export.bytes)?;
+            println!("exported {reference} to {}", out.display());
+            Ok(())
+        }
+        Command::ImportProject { file } => {
+            config.prepare()?;
+            let pool = db::connect(&config.db_path()).await?;
+            db::migrate(&pool).await?;
+            let bytes = std::fs::read(&file)?;
+            let outcome = pitcairn::archive::import_bytes(
+                &pool,
+                &config.data_dir,
+                &bytes,
+                config.max_upload_bytes,
+            )
+            .await?;
+            if outcome.already_existed {
+                println!(
+                    "project {} already exists; nothing imported",
+                    outcome.project_id
+                );
+            } else {
+                println!(
+                    "imported project {} ({} rows, {} new user stubs)",
+                    outcome.project_id,
+                    outcome.created_tables.values().sum::<i64>(),
+                    outcome.new_users.len()
+                );
+            }
             Ok(())
         }
         Command::ExportTypes => {

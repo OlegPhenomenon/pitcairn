@@ -29,10 +29,13 @@ async fn concurrent_confirmations_of_single_unit_resource_one_wins() {
         "names first conflicting day: {message}"
     );
 
+    // Scoped to this project: the demo seed has its own lab booking.
     let confirmed: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM bookings WHERE resource_id = ? AND status = 'confirmed'",
+        "SELECT COUNT(*) FROM bookings WHERE resource_id = ? AND status = 'confirmed'
+         AND trip_id IN (SELECT id FROM trips WHERE project_id = ?)",
     )
     .bind(&lab)
+    .bind(&fx.project_id)
     .fetch_one(&fx.app.pool)
     .await
     .unwrap();
@@ -123,10 +126,19 @@ async fn provider_confirms_only_own_boat_and_base_manager_cannot() {
     assert_eq!(resp.status(), 200);
     let raw: serde_json::Value = david.json(resp).await;
     let list: ListResponse<ProviderBookingDto> = serde_json::from_value(raw.clone()).unwrap();
-    assert_eq!(list.total, 1);
-    assert_eq!(list.items[0].booking_id, boat_booking.id);
-    assert_eq!(list.items[0].lead_name, "Dr Anna Hart");
-    assert_eq!(list.items[0].team_size, 4);
+    // The demo seed also books this boat; only own-resource bookings appear.
+    assert!(
+        list.items
+            .iter()
+            .all(|i| i.booking_id != other_booking.id && i.booking_id != room_booking.id)
+    );
+    let mine = list
+        .items
+        .iter()
+        .find(|i| i.booking_id == boat_booking.id)
+        .expect("own boat booking listed");
+    assert_eq!(mine.lead_name, "Dr Anna Hart");
+    assert_eq!(mine.team_size, 4);
     let text = raw.to_string();
     assert!(!text.contains("document"), "no documents in provider view");
 

@@ -2,8 +2,8 @@
 //! slices (architecture §4 "Deliverables").
 //!
 //! - the mock external-link checker (`PITCAIRN_LINK_CHECK_MODE=mock`, §2.1)
-//! - `check_link` / `deliverable_reminders` job executors and the daily
-//!   enqueue pass the worker calls once per UTC day
+//! - the `check_link` job executor and the daily link-check enqueue pass the
+//!   worker calls once per UTC day (reminders: `jobs::reminders`)
 //! - `unavailable_links` — the coordinator dashboard query slice D consumes
 //! - the ONE documented measurement CSV format (`site,date,variable,value,unit`)
 
@@ -17,7 +17,6 @@ use crate::util::now_rfc3339;
 use crate::{jobs, notify};
 
 pub const KIND_CHECK_LINK: &str = "check_link";
-pub const KIND_DELIVERABLE_REMINDERS: &str = "deliverable_reminders";
 
 /// Deliverable statuses that still need work from the team (open).
 pub const OPEN_STATUSES: [&str; 4] = ["proposed", "agreed", "submitted", "changes_requested"];
@@ -122,85 +121,14 @@ pub async fn run_link_check(state: &AppState, external_link_id: &str) -> AppResu
     Ok(())
 }
 
-/// `deliverable_reminders` job: one reminder per deliverable per day (dedupe
-/// key set by the daily enqueue pass). Reminds the sender; if the deliverable
-/// is already overdue the recipient is reminded too.
-pub async fn run_deliverable_reminder(state: &AppState, deliverable_id: &str) -> AppResult<()> {
-    let row: Option<(String, String, String, String, String)> = sqlx::query_as(
-        "SELECT project_id, title, due_date, sender_id, recipient_id
-         FROM deliverables WHERE id = ?",
-    )
-    .bind(deliverable_id)
-    .fetch_optional(&state.pool)
-    .await?;
-    let Some((project_id, title, due_date, sender_id, recipient_id)) = row else {
-        return Ok(());
-    };
-    let status: String = sqlx::query_scalar("SELECT status FROM deliverables WHERE id = ?")
-        .bind(deliverable_id)
-        .fetch_one(&state.pool)
-        .await?;
-    if !OPEN_STATUSES.contains(&status.as_str()) {
-        return Ok(());
-    }
-
-    let today = chrono::Utc::now().date_naive();
-    let overdue = chrono::NaiveDate::parse_from_str(&due_date, "%Y-%m-%d")
-        .map(|d| d < today)
-        .unwrap_or(false);
-    let body = if overdue {
-        format!("Deliverable \"{title}\" was due on {due_date} and is overdue.")
-    } else {
-        format!("Deliverable \"{title}\" is due on {due_date}.")
-    };
-    let link = format!("/app/projects/{project_id}/results");
-
-    let mut tx = crate::db::begin_immediate(&state.pool).await?;
-    notify::notify(
-        &mut tx,
-        &sender_id,
-        "deliverable.reminder",
-        "Deliverable reminder",
-        &body,
-        &link,
-        Some(&project_id),
-    )
-    .await?;
-    if overdue && recipient_id != sender_id {
-        notify::notify(
-            &mut tx,
-            &recipient_id,
-            "deliverable.reminder",
-            "Deliverable overdue",
-            &body,
-            &link,
-            Some(&project_id),
-        )
-        .await?;
-    }
-    tx.commit().await?;
-    Ok(())
-}
-
 /// Called by the job worker once per UTC day: enqueues one `check_link` job
-/// per submitted external link and one `deliverable_reminders` job per open
-/// deliverable due within 7 days or already overdue — all deduped per day.
+/// per submitted external link, deduped per day. (Deliverable reminders are
+/// scheduled by `jobs::reminders::enqueue_daily`.)
 pub async fn enqueue_daily_jobs(state: &AppState) -> AppResult<()> {
     let today = chrono::Utc::now().date_naive();
-    let soon = (today + chrono::Duration::days(7))
-        .format("%Y-%m-%d")
-        .to_string();
-
     let link_ids: Vec<String> = sqlx::query_scalar("SELECT id FROM external_links")
         .fetch_all(&state.pool)
         .await?;
-    let due_ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM deliverables
-         WHERE status IN ('agreed','submitted','changes_requested') AND due_date <= ?",
-    )
-    .bind(&soon)
-    .fetch_all(&state.pool)
-    .await?;
 
     let mut tx = crate::db::begin_immediate(&state.pool).await?;
     for id in link_ids {
@@ -209,15 +137,6 @@ pub async fn enqueue_daily_jobs(state: &AppState) -> AppResult<()> {
             KIND_CHECK_LINK,
             json!({"external_link_id": id}),
             Some(&format!("check_link:{id}:{today}")),
-        )
-        .await?;
-    }
-    for id in due_ids {
-        jobs::enqueue(
-            &mut tx,
-            KIND_DELIVERABLE_REMINDERS,
-            json!({"deliverable_id": id}),
-            Some(&format!("deliverable_reminders:{id}:{today}")),
         )
         .await?;
     }

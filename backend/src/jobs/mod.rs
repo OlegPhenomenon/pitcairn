@@ -10,6 +10,8 @@
 //! Slice C adds kinds `check_link` and `deliverable_reminders` (in
 //! `crate::deliverables`) plus the once-per-day enqueue pass below.
 
+pub mod reminders;
+
 use serde_json::Value;
 
 use crate::AppState;
@@ -175,12 +177,7 @@ async fn execute(state: &AppState, job: &JobRow) -> AppResult<()> {
             })?;
             crate::deliverables::run_link_check(state, link_id).await
         }
-        crate::deliverables::KIND_DELIVERABLE_REMINDERS => {
-            let deliverable_id = payload["deliverable_id"].as_str().ok_or_else(|| {
-                AppError::BadRequest("deliverable_reminders payload missing deliverable_id".into())
-            })?;
-            crate::deliverables::run_deliverable_reminder(state, deliverable_id).await
-        }
+        reminders::KIND => reminders::run(&state.pool, &payload).await,
         other => Err(AppError::BadRequest(format!("unknown job kind: {other}"))),
     }
 }
@@ -307,6 +304,9 @@ pub async fn worker_loop(state: AppState, mut shutdown: tokio::sync::watch::Rece
             last_daily = Some(today);
             if let Err(e) = crate::deliverables::enqueue_daily_jobs(&state).await {
                 tracing::error!(error = %e, "daily job enqueue failed");
+            }
+            if let Err(e) = reminders::enqueue_daily(&state.pool).await {
+                tracing::error!(error = %e, "daily reminder enqueue failed");
             }
         }
         tokio::select! {

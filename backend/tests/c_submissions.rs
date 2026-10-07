@@ -419,12 +419,15 @@ async fn check_link_job_and_manual_check_flag_unavailable() {
     );
 
     // The coordinator dashboard query exposes the two unavailable ones.
-    let bad = pitcairn::deliverables::unavailable_links(&app.pool)
+    // Scoped to this deliverable: the demo seed has its own unavailable link.
+    let bad: Vec<_> = pitcairn::deliverables::unavailable_links(&app.pool)
         .await
-        .unwrap();
+        .unwrap()
+        .into_iter()
+        .filter(|l| l.deliverable_id == did)
+        .collect();
     assert_eq!(bad.len(), 2);
     assert!(bad.iter().any(|l| l.url.contains(".invalid")));
-    assert_eq!(bad[0].deliverable_id, did);
 
     // Maria was notified about the newly-unavailable links.
     let n: (i64,) = sqlx::query_as(

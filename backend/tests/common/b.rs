@@ -23,7 +23,7 @@ pub async fn fixture_with_status(status: &str) -> Fixture {
             .fetch_one(&app.pool)
             .await
             .expect("seeded project");
-    sqlx::query("UPDATE projects SET status = ?, reference = 'PIT-2026-0001' WHERE id = ?")
+    sqlx::query("UPDATE projects SET status = ?, reference = 'PIT-2026-9001' WHERE id = ?")
         .bind(status)
         .bind(&project_id)
         .execute(&app.pool)

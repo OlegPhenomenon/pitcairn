@@ -42,9 +42,21 @@ async fn expert_of_another_project_gets_403() {
         .iter()
         .map(|p| p["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, vec![assigned.as_str()]);
+    // The demo seed assigns James to historic projects too: assert on the two
+    // projects of this test only.
+    assert!(ids.contains(&assigned.as_str()));
+    assert!(!ids.contains(&other.as_str()));
     let (_, reviews) = get(&james, "/reviews").await;
-    assert_eq!(reviews["total"], 1);
+    let for_project = |pid: &str| {
+        reviews["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["project_id"] == pid)
+            .count()
+    };
+    assert_eq!(for_project(&assigned), 1);
+    assert_eq!(for_project(&other), 0);
 
     // Another expert's review cannot be acted on; declining ends access.
     let review_id = review["id"].as_str().unwrap();

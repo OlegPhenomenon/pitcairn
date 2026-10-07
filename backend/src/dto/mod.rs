@@ -725,6 +725,212 @@ impl ListQuery {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Slice D: dashboard, search, reports, import, assist
+// ---------------------------------------------------------------------------
+
+/// One item in a dashboard section (§5).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct DashboardItemDto {
+    pub kind: String,
+    pub title: String,
+    pub subtitle: String,
+    pub project_id: Option<String>,
+    pub project_reference: Option<String>,
+    pub due_date: Option<String>,
+    pub link: String,
+}
+
+/// `GET /dashboard` — sections keyed by their §5 names; a user with several
+/// roles gets every one of their sections.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct DashboardResponse {
+    pub sections: std::collections::BTreeMap<String, Vec<DashboardItemDto>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct SearchProjectItemDto {
+    pub id: String,
+    pub reference: Option<String>,
+    pub title: String,
+    pub organisation: String,
+    pub status: String,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+    pub deliverables_received: i64,
+    pub deliverables_overdue: i64,
+}
+
+/// Per-project row of `GET /reports/deliverables`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct DeliverableReportRowDto {
+    pub project_id: String,
+    pub project_reference: Option<String>,
+    pub project_title: String,
+    pub organisation: String,
+    pub agreed: i64,
+    pub received: i64,
+    pub accepted: i64,
+    pub overdue: i64,
+    pub waived: i64,
+    pub total: i64,
+}
+
+/// Aggregated totals (by year or by organisation).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct DeliverableReportTotalsDto {
+    pub key: String,
+    pub agreed: i64,
+    pub received: i64,
+    pub accepted: i64,
+    pub overdue: i64,
+    pub waived: i64,
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct DeliverablesReportResponse {
+    pub projects: Vec<DeliverableReportRowDto>,
+    pub totals_by_year: Vec<DeliverableReportTotalsDto>,
+    pub totals_by_organisation: Vec<DeliverableReportTotalsDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct MeasurementVariableDto {
+    pub variable_key: String,
+    pub unit: String,
+    pub count: i64,
+    pub projects: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct MeasurementPointDto {
+    pub project_id: String,
+    pub project_reference: Option<String>,
+    pub project_title: String,
+    pub site: String,
+    pub observed_on: String,
+    pub value: f64,
+    pub unit: String,
+    pub source_label: String,
+}
+
+/// Series of points sharing one unit — charts never mix units (§4).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct MeasurementSeriesDto {
+    pub unit: String,
+    pub points: Vec<MeasurementPointDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct MeasurementsReportResponse {
+    pub variable_key: String,
+    pub series: Vec<MeasurementSeriesDto>,
+}
+
+/// One parsed CSV row of a legacy import preview, with per-field errors and
+/// the duplicate match (if any).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct ImportRowPreviewDto {
+    pub index: i64,
+    #[ts(type = "Record<string, string>")]
+    pub data: std::collections::BTreeMap<String, String>,
+    #[ts(type = "Record<string, string>")]
+    pub errors: std::collections::BTreeMap<String, String>,
+    pub duplicate_of: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct ImportBatchDto {
+    pub id: String,
+    pub kind: String,
+    pub status: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct LegacyImportPreviewResponse {
+    pub batch: ImportBatchDto,
+    pub rows: Vec<ImportRowPreviewDto>,
+}
+
+/// Preview of a project-archive import (§8).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct ArchiveImportPreviewResponse {
+    pub batch: ImportBatchDto,
+    pub project_reference: Option<String>,
+    pub project_title: String,
+    /// table name -> row count
+    #[ts(type = "Record<string, number>")]
+    pub records: std::collections::BTreeMap<String, i64>,
+    pub files: i64,
+    pub conflicts: Vec<String>,
+    /// Emails of users matched to existing accounts.
+    pub matched_users: Vec<String>,
+    /// Emails of users that will be created as disabled stubs.
+    pub new_users: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct ImportCommitResponse {
+    pub batch_id: String,
+    pub status: String,
+    pub created: i64,
+    pub skipped: i64,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct AssistExtractRequest {
+    pub template_version_id: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct AssistSuggestionDto {
+    pub field_key: String,
+    #[ts(type = "unknown")]
+    pub value: Value,
+    pub confidence: f64,
+    pub source_excerpt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct AssistExtractResponse {
+    pub suggestions: Vec<AssistSuggestionDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct AssistSummaryRequest {
+    pub project_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct AssistSummaryResponse {
+    pub project_id: String,
+    pub summary: String,
+}
+
 export_all!(
     UserDto,
     MeResponse,
@@ -759,6 +965,26 @@ export_all!(
     DemoSwitchRequest,
     MailMessageDto,
     DemoTotpResponse,
+    DashboardItemDto,
+    DashboardResponse,
+    SearchProjectItemDto,
+    DeliverableReportRowDto,
+    DeliverableReportTotalsDto,
+    DeliverablesReportResponse,
+    MeasurementVariableDto,
+    MeasurementPointDto,
+    MeasurementSeriesDto,
+    MeasurementsReportResponse,
+    ImportRowPreviewDto,
+    ImportBatchDto,
+    LegacyImportPreviewResponse,
+    ArchiveImportPreviewResponse,
+    ImportCommitResponse,
+    AssistExtractRequest,
+    AssistSuggestionDto,
+    AssistExtractResponse,
+    AssistSummaryRequest,
+    AssistSummaryResponse,
     DataDictionaryEntryDto,
     SubmissionLinkInput,
     ExternalLinkDto,

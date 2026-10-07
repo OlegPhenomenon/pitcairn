@@ -68,6 +68,8 @@ async fn accepted_setup(
     (anna, maria, project, d.id, vec![v1, v2])
 }
 
+/// Catalog items for this test's project only (the demo seed publishes its
+/// own historic projects, which these assertions must not count).
 async fn catalog_projects(
     client: &common::Client,
     path: &str,
@@ -77,6 +79,9 @@ async fn catalog_projects(
     let list: pitcairn::dto::ListResponse<pitcairn::dto::PublicProjectDto> =
         client.json(resp).await;
     list.items
+        .into_iter()
+        .filter(|p| p.reference.as_deref() == Some("PIT-2024-001"))
+        .collect()
 }
 
 #[tokio::test]
