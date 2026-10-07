@@ -20,6 +20,7 @@ use crate::dto::{
     ListResponse, SettingsDto, UserDto,
 };
 use crate::error::{AppError, AppResult};
+use crate::notify;
 use crate::routes::auth::load_user_dto;
 use crate::util::{new_id, now_rfc3339};
 use crate::validation::FieldErrors;
@@ -437,6 +438,17 @@ async fn grant_role(
             after: Some(Value::String(req.role.clone())),
             reason: None,
         },
+    )
+    .await?;
+
+    notify::notify(
+        &mut tx,
+        &user_id,
+        "role.granted",
+        "A new role was granted",
+        &format!("You were granted the role {}", req.role),
+        "",
+        None,
     )
     .await?;
 

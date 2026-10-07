@@ -120,7 +120,8 @@ async fn csrf_guard(
     let method = req.method().clone();
     let path = req.uri().path().to_string();
     if matches!(method, Method::GET | Method::HEAD | Method::OPTIONS)
-        || path == "/api/v1/integrations/bank/notifications"
+        // Nested under /api/v1, so middleware sees the stripped inner path.
+        || path == "/integrations/bank/notifications"
     {
         return Ok(next.run(req).await);
     }
@@ -144,10 +145,11 @@ async fn csrf_guard(
 /// (the endpoint's own extractor returns 401).
 async fn mfa_gate(State(state): State<AppState>, req: Request<Body>, next: Next) -> Response {
     let path = req.uri().path().to_string();
-    let exempt = path.starts_with("/api/v1/auth/")
-        || path.starts_with("/api/v1/invitations/")
-        || path.starts_with("/api/v1/public/")
-        || path.starts_with("/api/v1/integrations/");
+    let exempt = path.starts_with("/auth/")
+        || path.starts_with("/invitations/")
+        || path.starts_with("/public/")
+        || path.starts_with("/integrations/")
+        || path.starts_with("/demo/totp");
     if exempt {
         return next.run(req).await;
     }
