@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod b;
 pub mod c;
 
 use std::sync::Arc;

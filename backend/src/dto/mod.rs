@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+pub mod b;
+pub use b::*;
+
 pub const EXPORT_DIR: &str = "frontend/src/api/generated/";
 
 macro_rules! export_all {
@@ -13,6 +16,7 @@ macro_rules! export_all {
         /// Export every DTO's TypeScript bindings (CLI `export-types`).
         pub fn export_all() -> Result<(), ts_rs::ExportError> {
             $( <$t as TS>::export()?; )*
+            b::export()?;
             Ok(())
         }
     };
@@ -689,6 +693,10 @@ pub struct ProjectWorkspaceDto {
     pub project: ProjectDto,
     pub primary_message: Option<PrimaryMessageDto>,
     pub results: ResultsSectionDto,
+    /// Slice B: trips incl. bookings. Empty for viewers without project access.
+    pub trips: Vec<TripDto>,
+    /// Slice B: finance sees all invoices; everyone else sees issued + cancelled only.
+    pub invoices: Vec<InvoiceDto>,
 }
 
 impl ListQuery {

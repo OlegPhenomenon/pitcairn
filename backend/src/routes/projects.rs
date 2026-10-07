@@ -287,10 +287,14 @@ pub async fn load_workspace(
     project_id: &str,
 ) -> AppResult<ProjectWorkspaceDto> {
     let access = authz::project_access(&state.pool, actor, project_id).await?;
+    let (trips, invoices) =
+        super::trips::workspace_section(&state.pool, actor, project_id, access).await?;
     Ok(ProjectWorkspaceDto {
         project: load_project_dto(state, actor, project_id).await?,
         primary_message: load_primary_message(&state.pool, actor, project_id, access).await?,
         results: crate::routes::deliverables::workspace_section(&state.pool, project_id).await?,
+        trips,
+        invoices,
     })
 }
 
