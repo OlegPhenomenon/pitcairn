@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+pub mod a;
 pub mod b;
 pub use b::*;
 
@@ -16,6 +17,7 @@ macro_rules! export_all {
         /// Export every DTO's TypeScript bindings (CLI `export-types`).
         pub fn export_all() -> Result<(), ts_rs::ExportError> {
             $( <$t as TS>::export()?; )*
+            a::export()?;
             b::export()?;
             Ok(())
         }
@@ -667,15 +669,25 @@ pub struct PublicProjectDto {
 
 // --- Project workspace assembly (§5 GET /projects/{id}) ---
 
-/// The most urgent open action item for the viewer, rendered as the
-/// workspace headline ("Maria asks you to add a description of sites").
+/// The most urgent open item for the viewer, rendered as the workspace
+/// headline ("Maria asks you to add a description of sites"): the oldest open
+/// action item addressed to the viewer's side (any anchor — project, field,
+/// document slot, deliverable, …) or, for an assigned expert, a pending
+/// review invitation.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/api/generated/")]
 pub struct PrimaryMessageDto {
-    pub action_item_id: String,
-    pub thread_id: String,
+    /// Ready-to-show sentence.
+    pub text: String,
+    /// What is asked (action item title, or "review this application").
     pub title: String,
+    /// Who asks.
     pub by_name: String,
+    /// Set when the item is a conversation action item.
+    pub action_item_id: Option<String>,
+    pub thread_id: Option<String>,
+    /// Set when the item is a pending review invitation (expert viewers).
+    pub review_id: Option<String>,
     pub created_at: String,
 }
 
@@ -694,6 +706,8 @@ pub struct ResultsSectionDto {
 pub struct ProjectWorkspaceDto {
     pub project: ProjectDto,
     pub primary_message: Option<PrimaryMessageDto>,
+    /// Slice A: template schema, team, sites, per-tab counts.
+    pub application: a::ApplicationSectionDto,
     pub results: ResultsSectionDto,
     /// Slice B: trips incl. bookings. Empty for viewers without project access.
     pub trips: Vec<TripDto>,
