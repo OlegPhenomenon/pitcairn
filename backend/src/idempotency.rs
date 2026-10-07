@@ -39,8 +39,7 @@ where
 
     if let Some((stored_hash, status, body)) = existing {
         if stored_hash == request_hash {
-            let parsed: T = serde_json::from_str(&body)
-                .map_err(|e| AppError::internal(e))?;
+            let parsed: T = serde_json::from_str(&body).map_err(AppError::internal)?;
             return Ok((status as u16, parsed));
         }
         return Err(AppError::unprocessable(

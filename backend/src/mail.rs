@@ -51,12 +51,14 @@ impl MailTransport for DemoMailbox {
                 return Err("mail transport disabled by setting mail_enabled=false".into());
             }
             let now = crate::util::now_rfc3339();
-            sqlx::query("UPDATE mail_messages SET status = 'sent', sent_at = ?, error = NULL WHERE id = ?")
-                .bind(&now)
-                .bind(message_id)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| format!("db error: {e}"))?;
+            sqlx::query(
+                "UPDATE mail_messages SET status = 'sent', sent_at = ?, error = NULL WHERE id = ?",
+            )
+            .bind(&now)
+            .bind(message_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| format!("db error: {e}"))?;
             Ok(())
         })
     }

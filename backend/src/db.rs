@@ -23,7 +23,10 @@ pub async fn connect(db_path: &Path) -> AppResult<SqlitePool> {
 }
 
 pub async fn migrate(pool: &SqlitePool) -> AppResult<()> {
-    sqlx::migrate!("./migrations").run(pool).await.map_err(AppError::internal)?;
+    sqlx::migrate!("./migrations")
+        .run(pool)
+        .await
+        .map_err(AppError::internal)?;
     Ok(())
 }
 

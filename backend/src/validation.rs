@@ -25,7 +25,11 @@ impl FieldErrors {
     }
 
     pub fn max_len(&mut self, field: &str, value: &str, max: usize) {
-        self.check(field, value.len() <= max, &format!("must be at most {max} characters"));
+        self.check(
+            field,
+            value.len() <= max,
+            &format!("must be at most {max} characters"),
+        );
     }
 
     pub fn valid_date(&mut self, field: &str, value: &str) {
@@ -37,7 +41,9 @@ impl FieldErrors {
         if self.fields.is_empty() {
             Ok(())
         } else {
-            Err(AppError::Validation { fields: self.fields })
+            Err(AppError::Validation {
+                fields: self.fields,
+            })
         }
     }
 }

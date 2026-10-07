@@ -8,6 +8,7 @@ pub mod files;
 pub mod idempotency;
 pub mod jobs;
 pub mod mail;
+pub mod notify;
 pub mod password;
 pub mod ratelimit;
 pub mod refs;
@@ -71,12 +72,19 @@ impl AppState {
 
 pub fn build_app(state: AppState) -> axum::Router {
     let api = routes::api_router()
-        .layer(axum::middleware::from_fn_with_state(state.clone(), mfa_gate))
-        .layer(axum::middleware::from_fn_with_state(state.clone(), csrf_guard));
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            mfa_gate,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            csrf_guard,
+        ));
 
     let static_dir = state.config.static_dir.clone();
-    let spa = tower_http::services::ServeDir::new(&static_dir)
-        .not_found_service(tower_http::services::ServeFile::new(static_dir.join("index.html")));
+    let spa = tower_http::services::ServeDir::new(&static_dir).not_found_service(
+        tower_http::services::ServeFile::new(static_dir.join("index.html")),
+    );
     let spa_fallback = tower::service_fn(move |req: Request<Body>| {
         let mut spa = spa.clone();
         async move {
@@ -143,16 +151,15 @@ async fn mfa_gate(State(state): State<AppState>, req: Request<Body>, next: Next)
     if exempt {
         return next.run(req).await;
     }
-    if let Some(token) = session_token(req.headers()) {
-        if let Ok(actor) = authz::load_actor(&state, &token).await {
-            if actor.needs_mfa() {
-                return AppError::Forbidden {
-                    code: "mfa_required".into(),
-                    message: "multi-factor verification required".into(),
-                }
-                .into_response();
-            }
+    if let Some(token) = session_token(req.headers())
+        && let Ok(actor) = authz::load_actor(&state, &token).await
+        && actor.needs_mfa()
+    {
+        return AppError::Forbidden {
+            code: "mfa_required".into(),
+            message: "multi-factor verification required".into(),
         }
+        .into_response();
     }
     next.run(req).await
 }

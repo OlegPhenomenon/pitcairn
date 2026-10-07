@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-pub const EXPORT_DIR: &str = "../frontend/src/api/generated/";
+pub const EXPORT_DIR: &str = "frontend/src/api/generated/";
 
 macro_rules! export_all {
     ($($t:ty),* $(,)?) => {
@@ -18,7 +18,7 @@ macro_rules! export_all {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
 pub struct UserDto {
     pub id: String,
     pub email: String,
@@ -30,7 +30,7 @@ pub struct UserDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
 pub struct MeResponse {
     pub user: UserDto,
     pub mfa_verified: bool,
@@ -39,17 +39,60 @@ pub struct MeResponse {
 
 /// Standard list envelope: `{items, total}` with `?limit&offset`.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
 pub struct ListResponse<T> {
     pub items: Vec<T>,
     pub total: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../frontend/src/api/generated/")]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
 pub struct ListQuery {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct RegisterRequest {
+    pub email: String,
+    pub name: String,
+    pub organisation: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct LoginRequest {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct LoginResponse {
+    pub user: UserDto,
+    pub mfa_required: bool,
+    pub mfa_enrollment_required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct MfaEnrollResponse {
+    pub secret: String,
+    pub otpauth_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct MfaCodeRequest {
+    pub code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct AcceptInvitationResponse {
+    pub project_id: String,
 }
 
 impl ListQuery {
@@ -62,4 +105,15 @@ impl ListQuery {
     }
 }
 
-export_all!(UserDto, MeResponse, ListResponse<String>, ListQuery);
+export_all!(
+    UserDto,
+    MeResponse,
+    ListResponse<String>,
+    ListQuery,
+    RegisterRequest,
+    LoginRequest,
+    LoginResponse,
+    MfaEnrollResponse,
+    MfaCodeRequest,
+    AcceptInvitationResponse,
+);

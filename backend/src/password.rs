@@ -13,10 +13,10 @@ pub fn hash_password(password: &str) -> AppResult<String> {
     use rand::RngCore;
     let mut salt = [0u8; 16];
     rand::rng().fill_bytes(&mut salt);
-    let salt = SaltString::encode_b64(&salt).map_err(|e| crate::error::AppError::internal(e))?;
+    let salt = SaltString::encode_b64(&salt).map_err(crate::error::AppError::internal)?;
     let hash = argon2id()
         .hash_password(password.as_bytes(), &salt)
-        .map_err(|e| crate::error::AppError::internal(e))?;
+        .map_err(crate::error::AppError::internal)?;
     Ok(hash.to_string())
 }
 
@@ -25,5 +25,7 @@ pub fn verify_password(hash: &str, password: &str) -> bool {
         Ok(p) => p,
         Err(_) => return false,
     };
-    argon2id().verify_password(password.as_bytes(), &parsed).is_ok()
+    argon2id()
+        .verify_password(password.as_bytes(), &parsed)
+        .is_ok()
 }

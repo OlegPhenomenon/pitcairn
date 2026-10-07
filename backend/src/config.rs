@@ -45,8 +45,7 @@ impl Config {
             static_dir: env("PITCAIRN_STATIC_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("../frontend/dist")),
-            base_url: env("PITCAIRN_BASE_URL")
-                .unwrap_or_else(|| "http://localhost:8080".into()),
+            base_url: env("PITCAIRN_BASE_URL").unwrap_or_else(|| "http://localhost:8080".into()),
             demo_mode: env("PITCAIRN_DEMO_MODE").as_deref() == Some("true"),
             session_secret,
             session_secret_generated,

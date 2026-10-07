@@ -28,6 +28,7 @@ pub async fn write_chunk(
     let path = part_path(data_dir, upload_id);
     let mut file = tokio::fs::OpenOptions::new()
         .create(true)
+        .truncate(false)
         .write(true)
         .open(&path)
         .await?;

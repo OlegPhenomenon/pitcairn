@@ -16,12 +16,11 @@ pub async fn next(
     .bind(year)
     .execute(&mut **tx)
     .await?;
-    let n: i64 = sqlx::query_scalar(
-        "SELECT next - 1 FROM reference_counters WHERE prefix = ? AND year = ?",
-    )
-    .bind(prefix)
-    .bind(year)
-    .fetch_one(&mut **tx)
-    .await?;
+    let n: i64 =
+        sqlx::query_scalar("SELECT next - 1 FROM reference_counters WHERE prefix = ? AND year = ?")
+            .bind(prefix)
+            .bind(year)
+            .fetch_one(&mut **tx)
+            .await?;
     Ok(format!("{prefix}-{year}-{n:04}"))
 }

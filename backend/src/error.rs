@@ -13,6 +13,9 @@ pub enum AppError {
     BadRequest(String),
     #[error("not authenticated")]
     Unauthorized,
+    /// 401 with a specific snake_case code, e.g. "invalid_credentials", "invalid_totp".
+    #[error("{message}")]
+    AuthFailed { code: String, message: String },
     /// 403 with a specific snake_case code, e.g. "forbidden", "mfa_required", "protected_user"... (409 codes use Conflict).
     #[error("{message}")]
     Forbidden { code: String, message: String },
@@ -30,21 +33,40 @@ pub enum AppError {
     /// 503 with a specific code, e.g. "ai_unavailable".
     #[error("{message}")]
     Unavailable { code: String, message: String },
+    /// 429, e.g. login rate limit.
+    #[error("{0}")]
+    TooManyRequests(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
 
 impl AppError {
     pub fn forbidden(message: impl Into<String>) -> Self {
-        AppError::Forbidden { code: "forbidden".into(), message: message.into() }
+        AppError::Forbidden {
+            code: "forbidden".into(),
+            message: message.into(),
+        }
     }
 
     pub fn conflict(code: &str, message: impl Into<String>) -> Self {
-        AppError::Conflict { code: code.into(), message: message.into() }
+        AppError::Conflict {
+            code: code.into(),
+            message: message.into(),
+        }
     }
 
     pub fn unprocessable(code: &str, message: impl Into<String>) -> Self {
-        AppError::Unprocessable { code: code.into(), message: message.into() }
+        AppError::Unprocessable {
+            code: code.into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn auth_failed(code: &str, message: impl Into<String>) -> Self {
+        AppError::AuthFailed {
+            code: code.into(),
+            message: message.into(),
+        }
     }
 
     pub fn internal(err: impl std::fmt::Display) -> Self {
@@ -54,7 +76,7 @@ impl AppError {
     fn status_code(&self) -> StatusCode {
         match self {
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
-            AppError::Unauthorized => StatusCode::UNAUTHORIZED,
+            AppError::Unauthorized | AppError::AuthFailed { .. } => StatusCode::UNAUTHORIZED,
             AppError::Forbidden { .. } => StatusCode::FORBIDDEN,
             AppError::NotFound => StatusCode::NOT_FOUND,
             AppError::Conflict { .. } => StatusCode::CONFLICT,
@@ -62,6 +84,7 @@ impl AppError {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
             AppError::Unavailable { .. } => StatusCode::SERVICE_UNAVAILABLE,
+            AppError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -70,12 +93,14 @@ impl AppError {
         match self {
             AppError::BadRequest(_) => "bad_request",
             AppError::Unauthorized => "unauthorized",
+            AppError::AuthFailed { code, .. } => code,
             AppError::Forbidden { code, .. } => code,
             AppError::NotFound => "not_found",
             AppError::Conflict { code, .. } => code,
             AppError::Validation { .. } => "validation_failed",
             AppError::Unprocessable { code, .. } => code,
             AppError::Unavailable { code, .. } => code,
+            AppError::TooManyRequests(_) => "rate_limited",
             AppError::Internal(_) => "internal_error",
         }
     }

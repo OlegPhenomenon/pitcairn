@@ -12,7 +12,11 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     pub fn new(window: Duration, max: usize) -> Self {
-        RateLimiter { window, max, hits: Mutex::new(HashMap::new()) }
+        RateLimiter {
+            window,
+            max,
+            hits: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Record a hit; true if the key is within the limit.
@@ -20,7 +24,10 @@ impl RateLimiter {
         let mut map = self.hits.lock().expect("rate limiter poisoned");
         let now = Instant::now();
         let hits = map.entry(key.to_string()).or_default();
-        while hits.front().is_some_and(|t| now.duration_since(*t) > self.window) {
+        while hits
+            .front()
+            .is_some_and(|t| now.duration_since(*t) > self.window)
+        {
             hits.pop_front();
         }
         if hits.len() >= self.max {

@@ -22,18 +22,102 @@ pub struct Persona {
 }
 
 pub const PERSONAS: &[Persona] = &[
-    Persona { key: "anna", name: "Dr Anna Hart", email: "anna@demo.pitcairn.invalid", organisation: "Te Moana University (fictional), Wellington NZ", role: None, totp_secret: None },
-    Persona { key: "liam", name: "Liam Chen", email: "liam@demo.pitcairn.invalid", organisation: "Te Moana University (fictional), Wellington NZ", role: None, totp_secret: None },
-    Persona { key: "priya", name: "Priya Nair", email: "priya@demo.pitcairn.invalid", organisation: "Te Moana University (fictional), Wellington NZ", role: None, totp_secret: None },
-    Persona { key: "tomasi", name: "Tomasi Vea", email: "tomasi@demo.pitcairn.invalid", organisation: "Te Moana University (fictional), Wellington NZ", role: None, totp_secret: None },
-    Persona { key: "lukas", name: "Dr Lukas Weber", email: "lukas@demo.pitcairn.invalid", organisation: "North Sea Marine Lab (fictional)", role: None, totp_secret: None },
-    Persona { key: "maria", name: "Maria Ellis", email: "maria@demo.pitcairn.invalid", organisation: "Marine Science Base office, Natural Resources Division (demo)", role: Some("coordinator"), totp_secret: Some("PITCAIRNMARIA222222222222222222") },
-    Persona { key: "james", name: "Dr James Okafor", email: "james@demo.pitcairn.invalid", organisation: "MSB Scientific Advisory Panel (demo)", role: Some("expert"), totp_secret: Some("PITCAIRNJAMES222222222222222222") },
-    Persona { key: "helen", name: "Helen Brooks", email: "helen@demo.pitcairn.invalid", organisation: "Permits — acting for the Governor / MSB Board (demo)", role: Some("decision_maker"), totp_secret: Some("PITCAIRNHELEN22222222222222222") },
-    Persona { key: "sam", name: "Sam Torres", email: "sam@demo.pitcairn.invalid", organisation: "Marine Science Base (demo)", role: Some("base_manager"), totp_secret: Some("PITCAIRNSAM22222222222222222222") },
-    Persona { key: "ruth", name: "Ruth Palmer", email: "ruth@demo.pitcairn.invalid", organisation: "Pitcairn Islands Government (demo)", role: Some("finance"), totp_secret: Some("PITCAIRNRUTH2222222222222222222") },
-    Persona { key: "david", name: "David Lane", email: "david@demo.pitcairn.invalid", organisation: "Bounty Bay Boat Hire (fictional)", role: Some("provider"), totp_secret: None },
-    Persona { key: "admin", name: "Site Admin", email: "admin@demo.pitcairn.invalid", organisation: "—", role: Some("admin"), totp_secret: Some("PITCAIRNADMIN222222222222222222") },
+    Persona {
+        key: "anna",
+        name: "Dr Anna Hart",
+        email: "anna@demo.pitcairn.invalid",
+        organisation: "Te Moana University (fictional), Wellington NZ",
+        role: None,
+        totp_secret: None,
+    },
+    Persona {
+        key: "liam",
+        name: "Liam Chen",
+        email: "liam@demo.pitcairn.invalid",
+        organisation: "Te Moana University (fictional), Wellington NZ",
+        role: None,
+        totp_secret: None,
+    },
+    Persona {
+        key: "priya",
+        name: "Priya Nair",
+        email: "priya@demo.pitcairn.invalid",
+        organisation: "Te Moana University (fictional), Wellington NZ",
+        role: None,
+        totp_secret: None,
+    },
+    Persona {
+        key: "tomasi",
+        name: "Tomasi Vea",
+        email: "tomasi@demo.pitcairn.invalid",
+        organisation: "Te Moana University (fictional), Wellington NZ",
+        role: None,
+        totp_secret: None,
+    },
+    Persona {
+        key: "lukas",
+        name: "Dr Lukas Weber",
+        email: "lukas@demo.pitcairn.invalid",
+        organisation: "North Sea Marine Lab (fictional)",
+        role: None,
+        totp_secret: None,
+    },
+    Persona {
+        key: "maria",
+        name: "Maria Ellis",
+        email: "maria@demo.pitcairn.invalid",
+        organisation: "Marine Science Base office, Natural Resources Division (demo)",
+        role: Some("coordinator"),
+        totp_secret: Some("PITCAIRNMARIA222222222222222222"),
+    },
+    Persona {
+        key: "james",
+        name: "Dr James Okafor",
+        email: "james@demo.pitcairn.invalid",
+        organisation: "MSB Scientific Advisory Panel (demo)",
+        role: Some("expert"),
+        totp_secret: Some("PITCAIRNJAMES222222222222222222"),
+    },
+    Persona {
+        key: "helen",
+        name: "Helen Brooks",
+        email: "helen@demo.pitcairn.invalid",
+        organisation: "Permits — acting for the Governor / MSB Board (demo)",
+        role: Some("decision_maker"),
+        totp_secret: Some("PITCAIRNHELEN22222222222222222"),
+    },
+    Persona {
+        key: "sam",
+        name: "Sam Torres",
+        email: "sam@demo.pitcairn.invalid",
+        organisation: "Marine Science Base (demo)",
+        role: Some("base_manager"),
+        totp_secret: Some("PITCAIRNSAM22222222222222222222"),
+    },
+    Persona {
+        key: "ruth",
+        name: "Ruth Palmer",
+        email: "ruth@demo.pitcairn.invalid",
+        organisation: "Pitcairn Islands Government (demo)",
+        role: Some("finance"),
+        totp_secret: Some("PITCAIRNRUTH2222222222222222222"),
+    },
+    Persona {
+        key: "david",
+        name: "David Lane",
+        email: "david@demo.pitcairn.invalid",
+        organisation: "Bounty Bay Boat Hire (fictional)",
+        role: Some("provider"),
+        totp_secret: None,
+    },
+    Persona {
+        key: "admin",
+        name: "Site Admin",
+        email: "admin@demo.pitcairn.invalid",
+        organisation: "—",
+        role: Some("admin"),
+        totp_secret: Some("PITCAIRNADMIN222222222222222222"),
+    },
 ];
 
 /// Annex 2 (base_use) template schema, built from
@@ -145,7 +229,13 @@ pub async fn create_admin(pool: &SqlitePool, email: &str, name: &str) -> AppResu
 /// the only path to the first decision_maker/admin).
 pub async fn grant_role(pool: &SqlitePool, email: &str, role: &str) -> AppResult<()> {
     const ROLES: [&str; 7] = [
-        "coordinator", "expert", "decision_maker", "base_manager", "finance", "admin", "provider",
+        "coordinator",
+        "expert",
+        "decision_maker",
+        "base_manager",
+        "finance",
+        "admin",
+        "provider",
     ];
     if !ROLES.contains(&role) {
         return Err(crate::error::AppError::BadRequest(format!(
@@ -185,11 +275,10 @@ pub async fn seed_demo(pool: &SqlitePool) -> AppResult<()> {
     // --- personas, roles ---
     let mut admin_id = None;
     for p in PERSONAS {
-        let existing: Option<(String,)> =
-            sqlx::query_as("SELECT id FROM users WHERE email = ?")
-                .bind(p.email)
-                .fetch_optional(pool)
-                .await?;
+        let existing: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE email = ?")
+            .bind(p.email)
+            .fetch_optional(pool)
+            .await?;
         let user_id = match existing {
             Some((id,)) => id,
             None => {
@@ -239,7 +328,10 @@ pub async fn seed_demo(pool: &SqlitePool) -> AppResult<()> {
     // --- settings defaults ---
     for (key, value) in [
         ("mail_enabled", "true"),
-        ("organisation_name", "Pitcairn Islands Marine Science Base (demo)"),
+        (
+            "organisation_name",
+            "Pitcairn Islands Marine Science Base (demo)",
+        ),
         ("reference_prefix", "PIT"),
         ("public_catalog_enabled", "true"),
     ] {

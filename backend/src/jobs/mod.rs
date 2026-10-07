@@ -76,7 +76,9 @@ pub async fn run_once(state: &AppState) -> AppResult<bool> {
     .bind(&now)
     .fetch_optional(&state.pool)
     .await?;
-    let Some((id,)) = candidate else { return Ok(false) };
+    let Some((id,)) = candidate else {
+        return Ok(false);
+    };
 
     let lock_until = crate::util::time_plus_secs(LOCK_SECS);
     // Claim atomically; another worker may have taken it.
@@ -148,14 +150,17 @@ async fn execute(state: &AppState, job: &JobRow) -> AppResult<()> {
     let payload: Value = serde_json::from_str(&job.payload_json).unwrap_or(Value::Null);
     match job.kind.as_str() {
         KIND_SEND_EMAIL => {
-            let message_id = payload["mail_message_id"]
-                .as_str()
-                .ok_or_else(|| AppError::BadRequest("send_email payload missing mail_message_id".into()))?;
+            let message_id = payload["mail_message_id"].as_str().ok_or_else(|| {
+                AppError::BadRequest("send_email payload missing mail_message_id".into())
+            })?;
             state
                 .mail
                 .deliver(message_id)
                 .await
-                .map_err(|e| AppError::Unavailable { code: "mail_failed".into(), message: e })
+                .map_err(|e| AppError::Unavailable {
+                    code: "mail_failed".into(),
+                    message: e,
+                })
         }
         KIND_SCAN_FILE => {
             let file_id = payload["file_id"]
@@ -244,7 +249,9 @@ fn sniff_mime(bytes: &[u8]) -> Option<&'static str> {
         Some("image/gif")
     } else if bytes.starts_with(b"PK\x03\x04") {
         Some("application/zip")
-    } else if bytes.iter().all(|b| b.is_ascii() && (!b.is_ascii_control() || *b == b'\n' || *b == b'\r' || *b == b'\t')) {
+    } else if bytes.iter().all(|b| {
+        b.is_ascii() && (!b.is_ascii_control() || *b == b'\n' || *b == b'\r' || *b == b'\t')
+    }) {
         Some("text/plain")
     } else {
         None

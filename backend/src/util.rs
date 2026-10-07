@@ -6,7 +6,9 @@ pub fn now_rfc3339() -> String {
 }
 
 pub fn parse_time(s: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(s).ok().map(|t| t.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
 }
 
 pub fn new_id() -> String {

@@ -98,8 +98,11 @@ async fn main() -> AppResult<()> {
             Ok(())
         }
         Command::ExportTypes => {
-            pitcairn::dto::export_all().map_err(|e| pitcairn::error::AppError::internal(e))?;
-            println!("exported TypeScript bindings to {}", pitcairn::dto::EXPORT_DIR);
+            pitcairn::dto::export_all().map_err(pitcairn::error::AppError::internal)?;
+            println!(
+                "exported TypeScript bindings to ../{}",
+                pitcairn::dto::EXPORT_DIR
+            );
             Ok(())
         }
     }
@@ -128,9 +131,12 @@ async fn serve(config: Config) -> AppResult<()> {
     let listener = tokio::net::TcpListener::bind(&config.bind).await?;
     tracing::info!(bind = %config.bind, demo = config.demo_mode, "pitcairn listening");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     // Graceful stop: stop taking jobs, let the current one finish, close pool.
     let _ = shutdown_tx.send(true);
@@ -141,7 +147,9 @@ async fn serve(config: Config) -> AppResult<()> {
 
 async fn shutdown_signal() {
     let ctrl_c = async {
-        tokio::signal::ctrl_c().await.expect("install Ctrl-C handler");
+        tokio::signal::ctrl_c()
+            .await
+            .expect("install Ctrl-C handler");
     };
     #[cfg(unix)]
     let terminate = async {

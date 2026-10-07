@@ -7,8 +7,13 @@ use axum::http::request::Parts;
 
 use crate::error::{AppError, AppResult};
 
-pub const STAFF_ROLES: [&str; 5] =
-    ["coordinator", "decision_maker", "base_manager", "finance", "admin"];
+pub const STAFF_ROLES: [&str; 5] = [
+    "coordinator",
+    "decision_maker",
+    "base_manager",
+    "finance",
+    "admin",
+];
 
 #[derive(Debug, Clone)]
 pub struct Actor {
@@ -117,11 +122,7 @@ where
 /// coordinator only — never experts, never base managers. Non-personal:
 /// team viewers+, assigned experts, and staff EXCEPT a base_manager without
 /// other staff roles (summary only, no documents).
-pub fn can_view_document_category(
-    actor: &Actor,
-    access: ProjectAccess,
-    category: &str,
-) -> bool {
+pub fn can_view_document_category(actor: &Actor, access: ProjectAccess, category: &str) -> bool {
     match access {
         ProjectAccess::TeamLead | ProjectAccess::TeamEditor => true,
         ProjectAccess::TeamViewer => category != "personal",
@@ -175,19 +176,14 @@ where
 }
 
 /// Only the uploader (or staff) may attach a `file_id` to a document.
-pub async fn ensure_file_owned_by<'e, E>(
-    exec: E,
-    actor: &Actor,
-    file_id: &str,
-) -> AppResult<()>
+pub async fn ensure_file_owned_by<'e, E>(exec: E, actor: &Actor, file_id: &str) -> AppResult<()>
 where
     E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
 {
-    let uploader: Option<String> =
-        sqlx::query_scalar("SELECT uploaded_by FROM files WHERE id = ?")
-            .bind(file_id)
-            .fetch_optional(exec)
-            .await?;
+    let uploader: Option<String> = sqlx::query_scalar("SELECT uploaded_by FROM files WHERE id = ?")
+        .bind(file_id)
+        .fetch_optional(exec)
+        .await?;
     match uploader {
         None => Err(AppError::NotFound),
         Some(u) if u == actor.user_id || actor.is_staff() => Ok(()),
@@ -214,7 +210,8 @@ impl FromRequestParts<crate::AppState> for Actor {
             .and_then(|v| v.to_str().ok())
             .and_then(|cookies| {
                 cookies.split(';').map(str::trim).find_map(|c| {
-                    c.strip_prefix(&format!("{SESSION_COOKIE}=")).map(str::to_string)
+                    c.strip_prefix(&format!("{SESSION_COOKIE}="))
+                        .map(str::to_string)
                 })
             })
             .ok_or(AppError::Unauthorized)?;
@@ -223,6 +220,7 @@ impl FromRequestParts<crate::AppState> for Actor {
 }
 
 /// Resolve a raw session token to an Actor (401 on invalid/expired/disabled).
+#[allow(clippy::type_complexity)]
 pub async fn load_actor(state: &crate::AppState, token: &str) -> AppResult<Actor> {
     let session_id = crate::util::sha256_hex(token.as_bytes());
     let row: Option<(String, String, String, String, i64, String, Option<String>)> =
@@ -244,12 +242,11 @@ pub async fn load_actor(state: &crate::AppState, token: &str) -> AppResult<Actor
     if expired {
         return Err(AppError::Unauthorized);
     }
-    let roles: Vec<String> = sqlx::query_scalar(
-        "SELECT role FROM user_roles WHERE user_id = ? AND revoked_at IS NULL",
-    )
-    .bind(&user_id)
-    .fetch_all(&state.pool)
-    .await?;
+    let roles: Vec<String> =
+        sqlx::query_scalar("SELECT role FROM user_roles WHERE user_id = ? AND revoked_at IS NULL")
+            .bind(&user_id)
+            .fetch_all(&state.pool)
+            .await?;
     Ok(Actor {
         user_id,
         email,
@@ -289,37 +286,93 @@ mod tests {
     #[test]
     fn personal_documents_denied_to_experts_viewers_and_non_coordinator_staff() {
         let expert = actor(&["expert"]);
-        assert!(!can_view_document_category(&expert, ProjectAccess::Expert, "personal"));
+        assert!(!can_view_document_category(
+            &expert,
+            ProjectAccess::Expert,
+            "personal"
+        ));
         let viewer = actor(&[]);
-        assert!(!can_view_document_category(&viewer, ProjectAccess::TeamViewer, "personal"));
+        assert!(!can_view_document_category(
+            &viewer,
+            ProjectAccess::TeamViewer,
+            "personal"
+        ));
         let base_manager = actor(&["base_manager"]);
-        assert!(!can_view_document_category(&base_manager, ProjectAccess::Staff, "personal"));
+        assert!(!can_view_document_category(
+            &base_manager,
+            ProjectAccess::Staff,
+            "personal"
+        ));
         let finance = actor(&["finance"]);
-        assert!(!can_view_document_category(&finance, ProjectAccess::Staff, "personal"));
+        assert!(!can_view_document_category(
+            &finance,
+            ProjectAccess::Staff,
+            "personal"
+        ));
         let admin = actor(&["admin"]);
-        assert!(!can_view_document_category(&admin, ProjectAccess::Staff, "personal"));
+        assert!(!can_view_document_category(
+            &admin,
+            ProjectAccess::Staff,
+            "personal"
+        ));
         // allowed: team editor, team lead, coordinator
-        assert!(can_view_document_category(&actor(&[]), ProjectAccess::TeamEditor, "personal"));
-        assert!(can_view_document_category(&actor(&[]), ProjectAccess::TeamLead, "personal"));
-        assert!(can_view_document_category(&actor(&["coordinator"]), ProjectAccess::Staff, "personal"));
+        assert!(can_view_document_category(
+            &actor(&[]),
+            ProjectAccess::TeamEditor,
+            "personal"
+        ));
+        assert!(can_view_document_category(
+            &actor(&[]),
+            ProjectAccess::TeamLead,
+            "personal"
+        ));
+        assert!(can_view_document_category(
+            &actor(&["coordinator"]),
+            ProjectAccess::Staff,
+            "personal"
+        ));
     }
 
     #[test]
     fn base_manager_only_staff_sees_no_documents() {
         let bm = actor(&["base_manager"]);
-        assert!(!can_view_document_category(&bm, ProjectAccess::Staff, "application"));
+        assert!(!can_view_document_category(
+            &bm,
+            ProjectAccess::Staff,
+            "application"
+        ));
         // base_manager + coordinator does
         let both = actor(&["base_manager", "coordinator"]);
-        assert!(can_view_document_category(&both, ProjectAccess::Staff, "application"));
+        assert!(can_view_document_category(
+            &both,
+            ProjectAccess::Staff,
+            "application"
+        ));
     }
 
     #[test]
     fn non_personal_documents_denied_to_outsiders_and_public() {
         let anyone = actor(&[]);
-        assert!(!can_view_document_category(&anyone, ProjectAccess::None, "application"));
-        assert!(!can_view_document_category(&anyone, ProjectAccess::Public, "result"));
-        assert!(can_view_document_category(&anyone, ProjectAccess::TeamViewer, "application"));
-        assert!(can_view_document_category(&actor(&["expert"]), ProjectAccess::Expert, "result"));
+        assert!(!can_view_document_category(
+            &anyone,
+            ProjectAccess::None,
+            "application"
+        ));
+        assert!(!can_view_document_category(
+            &anyone,
+            ProjectAccess::Public,
+            "result"
+        ));
+        assert!(can_view_document_category(
+            &anyone,
+            ProjectAccess::TeamViewer,
+            "application"
+        ));
+        assert!(can_view_document_category(
+            &actor(&["expert"]),
+            ProjectAccess::Expert,
+            "result"
+        ));
     }
 
     #[test]
