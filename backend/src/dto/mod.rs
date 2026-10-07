@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+pub mod a;
+
 pub const EXPORT_DIR: &str = "frontend/src/api/generated/";
 
 macro_rules! export_all {
@@ -13,6 +15,7 @@ macro_rules! export_all {
         /// Export every DTO's TypeScript bindings (CLI `export-types`).
         pub fn export_all() -> Result<(), ts_rs::ExportError> {
             $( <$t as TS>::export()?; )*
+            a::export()?;
             Ok(())
         }
     };
