@@ -10,7 +10,10 @@ use crate::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::authz::{self, Actor, ProjectAccess};
 use crate::db;
-use crate::dto::{CreateProjectRequest, ListQuery, ListResponse, ProjectDto, ProjectListItemDto};
+use crate::dto::{
+    CreateProjectRequest, ListQuery, ListResponse, PrimaryMessageDto, ProjectDto,
+    ProjectListItemDto, ProjectWorkspaceDto,
+};
 use crate::error::{AppError, AppResult};
 use crate::util::{new_id, now_rfc3339};
 use crate::validation::FieldErrors;
@@ -266,12 +269,60 @@ async fn get_project(
     State(state): State<AppState>,
     actor: Actor,
     Path(project_id): Path<String>,
-) -> AppResult<Json<ProjectDto>> {
+) -> AppResult<Json<ProjectWorkspaceDto>> {
     let access = authz::project_access(&state.pool, &actor, &project_id).await?;
     if access == ProjectAccess::None {
         return Err(AppError::forbidden(
             "you do not have access to this project",
         ));
     }
-    Ok(Json(load_project_dto(&state, &actor, &project_id).await?))
+    Ok(Json(load_workspace(&state, &actor, &project_id).await?))
+}
+
+/// Full workspace payload for `GET /projects/{id}` (§5). Each slice adds ONE
+/// section field to `ProjectWorkspaceDto` and one assembly line here.
+pub async fn load_workspace(
+    state: &AppState,
+    actor: &Actor,
+    project_id: &str,
+) -> AppResult<ProjectWorkspaceDto> {
+    let access = authz::project_access(&state.pool, actor, project_id).await?;
+    Ok(ProjectWorkspaceDto {
+        project: load_project_dto(state, actor, project_id).await?,
+        primary_message: load_primary_message(&state.pool, actor, project_id, access).await?,
+        results: crate::routes::deliverables::workspace_section(&state.pool, project_id).await?,
+    })
+}
+
+/// Most urgent (oldest open) action item addressed to the viewer's side:
+/// `team` items for project members, `staff` items for everyone else.
+async fn load_primary_message(
+    pool: &sqlx::SqlitePool,
+    _actor: &Actor,
+    project_id: &str,
+    access: ProjectAccess,
+) -> AppResult<Option<PrimaryMessageDto>> {
+    let side = match access {
+        ProjectAccess::TeamViewer | ProjectAccess::TeamEditor | ProjectAccess::TeamLead => "team",
+        _ => "staff",
+    };
+    let row: Option<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT ai.id, ai.thread_id, ai.title, ai.created_at, u.name
+         FROM action_items ai JOIN users u ON u.id = ai.created_by
+         WHERE ai.project_id = ? AND ai.status = 'open' AND ai.addressed_to = ?
+         ORDER BY ai.created_at ASC LIMIT 1",
+    )
+    .bind(project_id)
+    .bind(side)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(
+        |(id, thread_id, title, created_at, by_name)| PrimaryMessageDto {
+            action_item_id: id,
+            thread_id,
+            title,
+            by_name,
+            created_at,
+        },
+    ))
 }
