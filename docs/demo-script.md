@@ -75,11 +75,11 @@ decision" → opens **Decisions**.
   explicit conditions, not a booking. Bookings come later and separately;
   a permit can be amended, and the superseded version stays on record.
   Only a decision maker can issue — an admin cannot."*
-- Optional: open Dr Mele Tupou's *coral cover* project → **Decisions**. It
-  holds two independent permits ("Coral photo-quadrat monitoring" and
-  "Coral tissue sampling for genetics"). Each has its own **Amend / Extend /
-  Revoke this permit** buttons; changing one never alters the other, and the
-  replaced version stays in the history.
+- Optional: open Dr Mele Tupou's *Coral cover transects* project →
+  **Decisions**. It holds two independent permits — the monitoring permit
+  and "Coral tissue sampling for genetics". Each has its own **Amend /
+  Extend / Revoke this permit** buttons; changing one never alters the
+  other, and the replaced version stays in the history.
 
 ## Step 5 — Anna plans the trip and bookings (≈1.5 min)
 

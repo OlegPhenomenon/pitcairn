@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pitcairn Research Hub — ответ на предварительную проверку требований</title>
+<style>
+  :root { --fg:#16202b; --muted:#566273; --line:#d6dce4; --ok:#1d6b45; --okbg:#e7f5ee; --warn:#7a4b00; --warnbg:#fff4dc; --sim:#2b4f8a; --simbg:#e8effa; }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--fg); max-width: 1100px; margin: 2rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.2rem; margin-top: 2.2rem; border-bottom: 2px solid var(--fg); padding-bottom: .2rem; }
+  h3 { font-size: 1.02rem; margin: 1.4rem 0 .4rem; }
+  p.lead { color: var(--muted); margin-top: 0; }
+  table { border-collapse: collapse; width: 100%; margin: .6rem 0 1rem; font-size: .9rem; }
+  th, td { border: 1px solid var(--line); padding: .45rem .55rem; vertical-align: top; text-align: left; }
+  th { background: #f3f5f8; }
+  code { font: .85em/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; background: #f3f5f8; padding: 0 .25em; border-radius: 3px; word-break: break-word; }
+  .tag { display: inline-block; font-size: .78rem; font-weight: 600; padding: .05rem .45rem; border-radius: 999px; white-space: nowrap; }
+  .ok { color: var(--ok); background: var(--okbg); }
+  .sim { color: var(--sim); background: var(--simbg); }
+  .warn { color: var(--warn); background: var(--warnbg); }
+  .box { border: 1px solid var(--line); border-radius: 6px; padding: .8rem 1rem; margin: .8rem 0; }
+  ol li, ul li { margin: .2rem 0; }
+  .small { font-size: .85rem; color: var(--muted); }
+  @media print { body { margin: 0; max-width: none; } h2 { break-after: avoid; } tr, .box { break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<h1>Ответ на предварительную проверку требований</h1>
+<p class="lead">Pitcairn Research Permits &amp; Data Hub · 7 октября 2026 · сверка с <code>01_Pitcairn_ponyatno.pdf</code>, редакция 2 · демо: <a href="https://pitcairn.shelfcompass.com">pitcairn.shelfcompass.com</a> · репозиторий: <a href="https://github.com/OlegPhenomenon/pitcairn">github.com/OlegPhenomenon/pitcairn</a>. SHA проверяемого коммита записан в комментарии ZIP-архива (<code>unzip -z</code>).</p>
+
+<div class="box">
+<strong>Коротко.</strong> Оба расхождения подтвердились в коде и исправлены. Затем все 16 групп требований сверены с исходным документом, а не с <code>docs/architecture.md</code>: найдено ещё 13 пробелов, все закрыты, плюс одна ошибка, которую выявил браузерный тест. Независимый код-ревью (GPT-6 Astra) нашёл 7 проблем в новом коде, все исправлены, на каждую есть регрессионный тест.<br>
+Итог проверок: backend — 315 тестов, 0 падений, clippy без предупреждений; frontend — 26 тестов, typecheck и lint чистые; браузерные тесты Playwright — 4 из 4 на свежей базе, дважды подряд. Изменения развёрнуты на демо-сервере и проверены там.
+</div>
+
+<h2>1. Два расхождения из проверки</h2>
+
+<h3>1.1 Несколько независимых разрешений в одном исследовании <span class="tag ok">исправлено</span></h3>
+<p><strong>Было в коде.</strong> Ограничение было не только в документации. <code>backend/src/routes/decisions.rs</code> при выдаче отклонял второе разрешение («a permit is already in force; the new decision must supersede it»). Любое изменение или продление заменяло единственное действующее разрешение проекта.</p>
+<p><strong>Стало.</strong></p>
+<ul>
+  <li>Каждое разрешение образует свою цепочку: миграция <code>0500_independent_permits.sql</code> добавляет поля <code>chain_id</code> и <code>title</code>. Существующие данные переносятся автоматически, архивы старого формата при импорте тоже.</li>
+  <li>Изменение, продление, отзыв или замена касаются ровно одной цепочки. Прежняя версия остаётся в истории с отметкой «superseded», остальные разрешения не меняются. Отозванное разрешение изменить уже нельзя.</li>
+  <li>Запрос Анны на продление указывает конкретное разрешение (<code>decision_id</code>). Оценка последствий показывает только его. Одобрить запрос можно только решением, которое сейчас действует в цепочке именно этого разрешения; отзыв не подходит.</li>
+  <li>Интерфейс. Во вкладке «Decisions» есть блок «Permits in force (N)»: у каждого разрешения своё название, условия и кнопки «Amend / Extend / Revoke this permit». В черновике есть поля «Permit name» и выбор разрешения, которое меняется. В «Changes» — выбор разрешения для продления. «Overview» показывает все действующие разрешения.</li>
+</ul>
+<p><strong>Проверка как в задании.</strong> В браузерном тесте <code>e2e/tests/full-story.spec.ts</code> на новом проекте новой команды выполняются шаги:</p>
+<ol>
+  <li>Выдаются A «Shore plankton observation» и B «Plankton net tows».</li>
+  <li>Учёный просит продлить только A. Мария видит последствия только для A.</li>
+  <li>Хелен продлевает A, получается A2. Текст блока B побайтно совпадает с тем, что был до продления.</li>
+  <li>Перенос поездки после согласования (см. раздел 3).</li>
+  <li>Отзыв только B. Остаётся «Permits in force (1)», A2 в силе.</li>
+</ol>
+<p>Backend-тесты:</p>
+<ul>
+  <li><code>a_decisions_changes::independent_permits_change_separately</code> — у B не меняются номер, сроки, условия и состояние; после отзыва B A2 действует; отозванное разрешение нельзя изменить.</li>
+  <li><code>a_decisions_changes::extension_request_cannot_be_approved_with_a_revocation</code></li>
+  <li><code>d_archive::archive_from_before_permit_chains_rebuilds_them</code></li>
+</ul>
+<p><strong>На демо.</strong> У проекта «Coral cover transects» (Dr Mele Tupou) теперь два действующих разрешения. Войдите как Helen → Decisions.</p>
+
+<h3>1.2 Реальная проверка ссылок на внешние хранилища <span class="tag ok">исправлено</span></h3>
+<p><strong>Было в коде.</strong> <code>backend/src/deliverables.rs</code> решал по тексту адреса (<code>.invalid</code> или <code>/missing</code>) и в сеть не обращался.</p>
+<p><strong>Стало.</strong> Новый модуль <code>backend/src/linkcheck.rs</code> выполняет настоящий HTTP-запрос: HEAD, а при 405/501 — GET одного байта; таймаут 10 с; до 5 перенаправлений, каждое проверяется заново. Результаты:</p>
+<table>
+<tr><th>Результат</th><th>Когда</th><th>Что видит Мария</th></tr>
+<tr><td><code>available</code></td><td>2xx</td><td>«Available · last checked …»</td></tr>
+<tr><td><code>missing</code></td><td>404 / 410</td><td>«Not found (HTTP 404) · last checked …», пункт на панели, одно уведомление</td></tr>
+<tr><td><code>unreachable</code></td><td>DNS, отказ соединения, таймаут, TLS, 5xx, закрытый адрес</td><td>«Unreachable» с причиной, пункт на панели, одно уведомление</td></tr>
+<tr><td><code>login_required</code></td><td>401 / 403 / 407 или перенаправление на страницу входа (SSO, SAML, CAS и т. п.)</td><td>«Login required — may be agreed closed access». Это не считается потерей данных, уведомления нет.</td></tr>
+</table>
+<ul>
+  <li>Сохраняются статус, HTTP-код, причина и время проверки (миграция <code>0510</code>).</li>
+  <li>У Марии есть кнопка «Check now». Ежедневная автоматическая проверка тоже идёт по-настоящему.</li>
+  <li>Защита от SSRF: только http/https. Адрес разрешается в IP заново на каждом шаге. Запрещены loopback, частные, link-local, ULA и прочие внутренние адреса, включая IPv4, записанный в форме IPv6. Соединение идёт только с проверенным адресом, прокси не используются.</li>
+  <li>Подготовленные демонстрационные примеры на зарезервированных доменах (<code>*.invalid</code>, <code>*.example</code>, <code>*.test</code>, <code>example.org/com/net</code>) остаются детерминированной имитацией. Режим <code>PITCAIRN_LINK_CHECK_MODE=live</code> включён на демо-сервере.</li>
+</ul>
+<p><strong>Проверка как в задании.</strong> В <code>e2e/tests/full-story.spec.ts</code> учёный указывает ссылки на тестовое хранилище, настоящий HTTP-сервер. Мария нажимает «Check now» → «Available». Файл удаляется с сервера, повторная проверка того же адреса → «Not found», «HTTP 404 · last checked …». Закрытый архив показан как «Login required». Название адреса на результат не влияет.</p>
+<p>Backend-тесты: <code>c_link_check::live_check_available_then_missing_after_file_removed</code>, <code>…login_required_is_not_data_loss</code>, <code>…unreachable_redirects_and_head_fallback</code>, <code>…redirect_login_detection_uses_auth_segments_not_substrings</code>, <code>…ssrf_guard_refuses_private_addresses_without_the_test_flag</code>, <code>…demo_hosts_keep_the_deterministic_mock_in_live_mode</code>.</p>
+<p><strong>Проверка в реальной сети</strong> (та же сборка, настоящие адреса в интернете):</p>
+<ul>
+  <li><code>raw.githubusercontent.com/…/README.md</code> → available (HTTP 200)</li>
+  <li><code>…/does-not-exist.csv</code> → missing (HTTP 404)</li>
+  <li><code>github.com/settings/profile</code> → login_required (302 на страницу входа)</li>
+  <li>несуществующий домен → unreachable («Host name could not be resolved»)</li>
+</ul>
+
+<h2>2. Сверка всех 16 групп требований</h2>
+<p class="small">Статусы: <span class="tag ok">работает</span> — действие доступно через сайт, сохраняется в базе и подтверждено тестом; <span class="tag sim">имитация внешнего сервиса</span> — внешняя система замещена, но записи и расчёты внутри приложения настоящие; <span class="tag warn">ограничение</span> — то, о чём нужно знать. Пути к коду указаны относительно корня репозитория.</p>
+<table>
+<tr><th>№</th><th>Требование</th><th>Где в интерфейсе</th><th>Код</th><th>Чем подтверждено</th><th>Статус</th></tr>
+<tr><td>1</td><td>Команда: приглашение, права на редактирование, смена руководителя, удалённый участник теряет доступ даже по старой ссылке</td><td>Проект → Team</td><td><code>routes/team.rs</code>, <code>routes/documents.rs</code></td><td>e2e full-story (приглашение по ссылке), e2e access.spec (старая ссылка → 403); <code>a_access::second_team_cannot_read_and_removed_member_loses_access</code>, <code>document_authz::removed_member_loses_download_access</code>, <code>a_access::invitation_accept_requires_matching_email</code></td><td><span class="tag ok">работает</span></td></tr>
+<tr><td>2</td><td>Сотрудник настраивает поля, документы и подсказки; новая редакция правил — только для новых подач</td><td>Settings → Templates; теперь доступно и координатору, а не только техническому администратору</td><td><code>routes/templates.rs</code></td><td><code>a_templates::coordinator_publishes_template_v2_old_revision_renders_with_v1</code> (координатор публикует v2, ранее поданная ревизия отображается по v1, новый проект — по v2)</td><td><span class="tag ok">работает</span> <span class="tag warn">редактор шаблонов проверен API-тестом, не браузерным</span></td></tr>
+<tr><td>3</td><td>Черновик сохраняется, продолжение после обрыва, двойное «Отправить» не создаёт вторую заявку, старая версия файла доступна</td><td>Application (автосохранение, локальная копия черновика); у каждого документа список всех версий с автором и ссылкой на скачивание</td><td><code>routes/projects.rs</code>, <code>idempotency.rs</code>, <code>features/upload/DocumentSlot.tsx</code></td><td><code>a_autosave_submit::concurrent_autosaves_with_same_version_one_gets_stale_version</code>, <code>…idempotent_double_submit_creates_one_revision</code>, <code>DocumentSlot.test.tsx</code> (все версии), e2e (запрос и загрузка исправленного документа)</td><td><span class="tag ok">работает</span> (список версий добавлен)</td></tr>
+<tr><td>4</td><td>Мария назначает эксперта и видит ожидание ответа; эксперт пишет заключение или отказывается; служебные заметки отделены</td><td>Review, My reviews, Messages (видимость Internal)</td><td><code>routes/reviews.rs</code>, <code>routes/conversation.rs</code></td><td>e2e full-story (назначение, принятие, заключение); <code>a_access::coordinator_can_pick_only_active_experts</code>, <code>a_conversation_sites::internal_thread_invisible_to_team</code>, <code>c_publication::catalog_never_leaks_internal_content</code></td><td><span class="tag ok">работает</span></td></tr>
+<tr><td>5</td><td>Автор, основание, даты, разрешённые действия, документ; запрос изменения или продления; первоначальное решение и новый ответ сохраняются</td><td>Decisions, Changes, печатный документ решения</td><td><code>routes/decisions.rs</code>, <code>routes/change_requests.rs</code></td><td>Раздел 1.1; <code>a_full_application::full_application_path_to_issued_permit_with_conditions</code>, <code>a_decisions_changes::admin_cannot_issue_decision_maker_can</code></td><td><span class="tag ok">работает</span></td></tr>
+<tr><td>6</td><td>Область на карте; поиск других проектов в той же области; закрытые точки скрыты на карте и при скачивании</td><td>Sites (точка или полигон); для сотрудников — «Find projects in this area» → Search с фильтром по области (в адресе страницы)</td><td><code>routes/sites.rs</code>, <code>routes/search.rs</code>, <code>features/search/bbox.ts</code></td><td><code>d_search::search_by_q_org_year_bbox_and_overdue</code>, <code>sec_public_bbox::bbox_filter_uses_generalized_bounds_for_sensitive_sites</code>, <code>a_conversation_sites::sensitive_site_generalized_for_unrelated_expert</code>, <code>bbox.test.ts</code></td><td><span class="tag ok">работает</span> (переход «из этого места» добавлен)</td></tr>
+<tr><td>7</td><td>Несколько поездок; календарь ресурсов; один прибор нельзя подтвердить двум группам; лодку подтверждает владелец; отмена или перенос освобождают даты</td><td>Trips, Calendar (Sam), Provider (David), Changes</td><td><code>routes/trips.rs</code>, <code>routes/change_requests.rs</code></td><td><code>b_bookings::concurrent_confirmations_of_single_unit_resource_one_wins</code>, <code>…provider_confirms_only_own_boat_and_base_manager_cannot</code>, <code>…cancel_trip_releases_bookings_and_frees_capacity</code>, <code>a_decisions_changes::reschedule_impact_and_approval_release_bookings_only</code> (теперь целиком через API), e2e (перенос)</td><td><span class="tag ok">работает</span></td></tr>
+<tr><td>8</td><td>Стоимость по услугам; выставленный счёт сохраняет цены; частичная оплата, отмена, возврат, проверка перевода; повторное сообщение банка не засчитывается</td><td>Finance (Ruth), Invoices, Settings → Resources (тарифы теперь меняют base manager и finance)</td><td><code>routes/money.rs</code>, <code>routes/resources.rs</code></td><td><code>b_money::tariff_change_after_line_creation_does_not_change_invoice</code>, <code>…partial_payment_refund_then_cancel</code>, <code>…duplicate_bank_notification_is_counted_once</code>, <code>roles_admin::base_manager_and_finance_edit_tariffs_researcher_cannot</code>, e2e money-and-capacity</td><td><span class="tag ok">работает</span> <span class="tag sim">банк и тестовая карта — имитация</span></td></tr>
+<tr><td>9</td><td>Название, срок, отправитель и получатель; изменение срока с объяснением; несданное остаётся видимым; закрытие проекта с несданным результатом требует явного решения</td><td>Results, Dashboard (просрочки), Project tools → Close project</td><td><code>routes/deliverables.rs</code>, <code>jobs/reminders.rs</code></td><td><code>c_deliverables::propose_agree_and_reagree_after_due_date_change</code>, <code>…close_project_requires_resolving_open_deliverables</code>, <code>d_reminders::daily_scan_reminds_sender_and_recipient_once_per_day</code>, e2e (согласование сроков)</td><td><span class="tag ok">работает</span></td></tr>
+<tr><td>10</td><td>Загрузка частями с продолжением, проверка целостности; исправленная таблица — новая версия, ранее принятая не исчезает</td><td>Загрузка с паузой и продолжением; на принятом результате — «Submit corrected version»</td><td><code>routes/uploads.rs</code>, <code>routes/deliverables.rs</code></td><td><code>uploads::multi_chunk_upload_tracks_missing_chunks</code>, <code>uploads::complete_with_wrong_sha256_fails</code>, <code>c_submissions::corrected_version_keeps_earlier_accepted_until_accepted</code>, <code>…concurrent_accept_and_request_changes_stay_consistent</code></td><td><span class="tag ok">работает</span> (исправление после принятия добавлено) <span class="tag warn">обрыв загрузки проверен unit- и backend-тестами, не в браузере</span></td></tr>
+<tr><td>11</td><td>Адрес, описание и версия; Мария видит недоступность; одна ссылка не считается выполненной договорённостью</td><td>Results → External links, «Check now», Dashboard</td><td><code>linkcheck.rs</code>, <code>deliverables.rs</code></td><td>Раздел 1.2; <code>c_submissions::link_only_submission_never_auto_accepts</code></td><td><span class="tag ok">работает</span></td></tr>
+<tr><td>12</td><td>Номер образца, место, организация, связанные результаты анализа</td><td>Samples (колонка «Related results»); в карточке результата — «Linked samples»</td><td><code>routes/deliverables.rs</code> (samples, фильтр <code>deliverable_id</code>)</td><td><code>c_samples::sample_result_link_visible_to_viewer</code>, <code>…samples_filter_by_deliverable_beyond_first_page</code>, <code>samples.test.tsx</code></td><td><span class="tag ok">работает</span> (связь стала видна всем участникам)</td></tr>
+<tr><td>13</td><td>Публикация отдельно от приёмки; описание без файла; отложенная публикация; личные документы отделены</td><td>Results → Set publication; публичный Catalog</td><td><code>routes/public.rs</code></td><td><code>c_publication::metadata_only_publishes_without_files</code>, <code>…metadata_and_files_with_embargo_controls_downloads</code>, <code>…catalog_never_leaks_internal_content</code>, e2e (публикация, анонимный каталог, закрытый файл → 403/404)</td><td><span class="tag ok">работает</span></td></tr>
+<tr><td>14</td><td>Поиск по организации, году, территории и теме; кто сдал и кто задерживает; графики сопоставимых измерений с источником и единицами</td><td>Search, Reports</td><td><code>routes/search.rs</code>, <code>features/reports</code></td><td>e2e: другой сотрудник (Helen) находит новое исследование по организации и году, график «temperature (C)» построен из принятой исправленной таблицы (2 строки, источник «… — Survey dataset (submission #2)»); <code>d_reports::newly_accepted_measurement_table_reaches_reports</code>, <code>a_autosave_submit::date_range_answer_sets_project_dates_and_year_search_finds_it</code></td><td><span class="tag ok">работает</span> (исправлена ошибка, см. раздел 4)</td></tr>
+<tr><td>15</td><td>Импорт прежних заявок, документов и результатов с просмотром повторов и ошибок; выгрузка, достаточная для восстановления в другой установке</td><td>Settings → Import (CSV или ZIP с папкой <code>files/</code>); Project tools → Export project ZIP</td><td><code>legacy.rs</code>, <code>routes/import.rs</code>, <code>archive.rs</code></td><td><code>d_legacy::zip_import_flags_missing_file_and_duplicate_then_commits_documents_and_results</code>, <code>d_archive::new_project_built_over_http_round_trips_into_a_second_install</code>, <code>d_backup::backup_then_restore_into_empty_dir_is_identical</code></td><td><span class="tag ok">работает</span> (импорт файлов и тест переноса нового проекта добавлены)</td></tr>
+<tr><td>16</td><td>Уведомления о нужных действиях; недоставленное письмо не теряет заявку или решение; значимые изменения — с именем и датой, исправление с объяснением</td><td>Колокольчик, Dashboard, History, Settings → Jobs, Demo mailbox</td><td><code>notify.rs</code>, <code>audit.rs</code>, <code>jobs</code></td><td><code>mail_outage::role_grant_queues_email_and_notification_survives_mail_outage</code>, <code>d_dashboard::coordinator_sections_cover_the_whole_pipeline</code>, e2e (запрос документа и ответ)</td><td><span class="tag ok">работает</span> <span class="tag sim">почта — демо-ящик</span></td></tr>
+</table>
+
+<h3>Правила раздела 7</h3>
+<table>
+<tr><th>Правило</th><th>Как выполнено</th><th>Тест</th></tr>
+<tr><td>Сотрудник меняет пользователей, шаблоны и цены через настройки</td><td>Шаблоны — координатор. Ресурсы и тарифы — base manager; finance меняет только тарифы. Пользователи — экран для decision maker (выдача и отзыв роли decision_maker) и для координатора (роли expert и provider). Себе роль выдать нельзя.</td><td><code>roles_admin::*</code> (6 тестов), <code>a_templates::coordinator_publishes_template_v2_old_revision_renders_with_v1</code></td></tr>
+<tr><td>Технический администратор не выдаёт государственное разрешение</td><td>Администратор получает 403 и при выдаче решения, и при назначении роли decision_maker</td><td><code>a_decisions_changes::admin_cannot_issue_decision_maker_can</code>, <code>roles_admin::admin_cannot_grant_decision_maker_but_decision_maker_can</code></td></tr>
+<tr><td>Дополнительное подтверждение входа для сотрудников</td><td>TOTP</td><td><code>auth_flow::staff_blocked_until_mfa_then_can_access</code>, <code>sec_roles_mfa::*</code></td></tr>
+<tr><td>Резервная копия, восстановление, полный экспорт</td><td>Проверяется именно восстановление, а не только создание копии</td><td><code>d_backup::*</code>, <code>d_archive::*</code></td></tr>
+<tr><td>ИИ не влияет на решения; работа без ИИ</td><td>Без ИИ-сервиса приложение работает полностью</td><td><code>d_assist::assist_returns_503_when_off_and_the_app_works_without_it</code></td></tr>
+<tr><td>В рабочей установке нет переключателя ролей</td><td>Демо-эндпоинты возвращают 404, если демо-режим выключен</td><td><code>auth_flow::demo_endpoints_404_when_demo_off</code></td></tr>
+</table>
+
+<h2>3. Сценарии проверки раздела 6 и пункта 5 проверки</h2>
+<p>Все сценарии выполняются на данных, созданных внутри теста: новый учёный регистрируется через сайт, новый проект, свои документы и результаты. Заранее подготовленная история не используется.</p>
+<table>
+<tr><th>Сценарий</th><th>Что делает тест</th><th>Где</th></tr>
+<tr><td>Вся история</td><td>Регистрация новой команды, приглашение коллеги. Заявка по Annex 2 с документами. Мария запрашивает документ, учёный отвечает новой версией. Эксперт пишет заключение, Хелен выдаёт разрешение. Поездка и бронь, подтверждение Сэма. Счёт и тестовая оплата. Согласованные результаты: один возвращён на исправление, исправленный принят. Публикация, поиск в каталоге без входа; закрытый файл остаётся закрытым.</td><td><code>e2e/tests/full-story.spec.ts</code></td></tr>
+<tr><td>Перенос после согласования</td><td>Поездка и бронь подтверждены, разрешения выданы, сроки результатов согласованы. Учёный просит перенос. Мария видит: бронь «Will be re-requested», результаты со сроком раньше новой даты, разрешение B, которое не покрывает новые даты. Продлённое A2 последствий не имеет. После одобрения текст разрешения B не изменился.</td><td><code>e2e/tests/full-story.spec.ts</code>; <code>a_decisions_changes::reschedule_impact_and_approval_release_bookings_only</code></td></tr>
+<tr><td>Изменение одного разрешения</td><td>A и B; продление только A; отзыв только B.</td><td>Раздел 1.1</td></tr>
+<tr><td>Дальнейшая работа с результатами</td><td>Возврат на исправление → новая версия → принятие. Другой сотрудник находит исследование через поиск. График построен именно из принятой таблицы.</td><td><code>e2e/tests/full-story.spec.ts</code></td></tr>
+<tr><td>Люди и доступ</td><td>Вторая команда не видит материалы Анны. Удалённый коллега по старой ссылке получает 403. Заключение эксперта не попадает в каталог.</td><td><code>e2e/tests/access.spec.ts</code>, <code>c_publication::catalog_never_leaks_internal_content</code></td></tr>
+<tr><td>Сбои и деньги</td><td>Продолжение прерванной загрузки. Одновременная бронь одного прибора двумя командами. Двойное подтверждение оплаты. Отключённая почта.</td><td><code>uploads::*</code>, <code>uploader.test.ts</code>, <code>b_bookings::concurrent_confirmations_of_single_unit_resource_one_wins</code>, e2e money-and-capacity, <code>mail_outage::*</code></td></tr>
+<tr><td>Завершение и передача</td><td>Закрытие проекта с несданным результатом требует решения. Новый проект, собранный через API (две версии документа, два разрешения и продление, бронь, счёт с частичной оплатой, принятый результат с файлом), выгружается и восстанавливается во второй чистой установке через HTTP. Там открываются все записи, файлы совпадают побайтно. Личные ключи не нужны.</td><td><code>c_deliverables::close_project_requires_resolving_open_deliverables</code>, <code>d_archive::new_project_built_over_http_round_trips_into_a_second_install</code>, <code>d_backup::*</code></td></tr>
+</table>
+
+<h2>4. Что ещё исправлено по итогам сверки</h2>
+<ol>
+  <li><strong>Даты проекта не заполнялись из заявки.</strong> Поле «Proposed dates on Pitcairn» сохранялось только как ответ анкеты, а поля проекта <code>start_date</code> и <code>end_date</code> оставались пустыми. Поэтому новое исследование не находилось при поиске по году. Ошибку выявил браузерный тест. Исправлено в <code>routes/projects.rs</code>, тест <code>a_autosave_submit::date_range_answer_sets_project_dates_and_year_search_finds_it</code>.</li>
+  <li>Список всех версий документа в интерфейсе, с именем загрузившего.</li>
+  <li>Исправленная версия результата после принятия. Принятая версия остаётся действующей (в каталоге и отчётах), пока не принята новая.</li>
+  <li>Связь образца с результатом видна всем участникам.</li>
+  <li>Поиск других проектов в той же области — со страницы участка.</li>
+  <li>Настройки для сотрудников Питкэрна, а не только для технического администратора (см. правила раздела 7).</li>
+  <li>Импорт прежних исследований из ZIP с файлами заявок, отчётов и данных. Проверяются повторы, отсутствующие файлы, типы, размер и антивирусная сигнатура.</li>
+  <li>Тест переноса нового проекта в другую установку. Он нашёл и закрыл две ошибки в <code>archive.rs</code>: повтор номера счёта после импорта и порядок вставки цепочек разрешений.</li>
+</ol>
+
+<h2>5. Независимый код-ревью</h2>
+<p>Изменения проверила модель GPT-6 Astra, только на корректность и безопасность. Найдено 7 проблем уровня P2, все исправлены, на каждую есть регрессионный тест:</p>
+<table>
+<tr><th>Находка</th><th>Исправление и тест</th></tr>
+<tr><td>Запрос на продление можно было «одобрить» отзывом разрешения</td><td>Требуется действующее решение, которое не является отзывом, в цепочке именно этого разрешения — <code>extension_request_cannot_be_approved_with_a_revocation</code></td></tr>
+<tr><td>Гонка между «принять» и «вернуть на исправление»</td><td>Состояние перепроверяется внутри транзакции, обновления защищены условием — <code>c_submissions::concurrent_accept_and_request_changes_stay_consistent</code> и два детерминированных теста</td></tr>
+<tr><td>ZIP-бомба: отклонённые записи не учитывались в общем лимите распаковки</td><td>Учитывается каждый распакованный байт — <code>d_legacy::zip_preview_flags_deflated_oversized_entries_without_keeping_them</code>, <code>legacy::tests::oversized_entries_count_against_the_decompression_budget</code></td></tr>
+<tr><td>Архив старого формата давал разрешения без цепочки</td><td>Цепочки восстанавливаются при импорте — <code>d_archive::archive_from_before_permit_chains_rebuilds_them</code></td></tr>
+<tr><td>Очистка дат в заявке не очищала даты проекта</td><td>Тот же тест дат, сценарий очистки</td></tr>
+<tr><td>Файл вроде <code>cataloging.csv</code> принимался за страницу входа</td><td>Распознаются только целые сегменты пути и имена хостов — <code>c_link_check::redirect_login_detection_uses_auth_segments_not_substrings</code></td></tr>
+<tr><td>Связанные образцы терялись после первых 50</td><td>Фильтр на сервере — <code>c_samples::samples_filter_by_deliverable_beyond_first_page</code></td></tr>
+</table>
+<p>Правила выдачи ролей и защита от SSRF: замечаний нет.</p>
+
+<h2>6. Что остаётся имитацией или ограничением</h2>
+<ul>
+  <li><span class="tag sim">имитация</span> Банк, тестовая карта и почта (демо-ящик). Суммы, частичная оплата, возврат, остаток и уведомления при этом сохраняются в базе по-настоящему (тесты <code>b_money::*</code>).</li>
+  <li><span class="tag sim">имитация</span> Проверка файлов на вирусы — сигнатурный сканер (EICAR и встроенные сигнатуры), а не коммерческий антивирус.</li>
+  <li><span class="tag sim">имитация</span> ИИ-помощник работает в режиме mock. Решения, права и расчёты от него не зависят.</li>
+  <li><span class="tag warn">ограничение</span> Ссылки на зарезервированные демо-домены (<code>*.invalid</code>, <code>example.org</code> и т. п.) намеренно проверяются имитацией, чтобы подготовленные примеры не менялись. Все остальные адреса проверяются по сети.</li>
+  <li><span class="tag warn">ограничение</span> Редактор шаблонов и обрыв загрузки большого файла проверены API- и unit-тестами, браузерного сценария для них нет.</li>
+  <li><span class="tag warn">ограничение</span> Браузерный тест проверки ссылок обращается к тестовому серверу на <code>127.0.0.1</code>. Для этого только в тестовом окружении включён флаг <code>PITCAIRN_LINK_CHECK_ALLOW_PRIVATE</code>; на сервере он выключен.</li>
+  <li><span class="tag warn">ограничение</span> Правовые основания в демо вымышленные («demo reference»). Конкретные правовые процедуры Питкэрна не моделировались.</li>
+</ul>
+
+<h2>7. Как воспроизвести</h2>
+<pre><code>cd backend &amp;&amp; cargo test                 # 315 тестов
+cd frontend &amp;&amp; npm ci &amp;&amp; npm run typecheck &amp;&amp; npm run lint &amp;&amp; npx vitest run &amp;&amp; npm run build
+cd e2e &amp;&amp; npm ci &amp;&amp; npx playwright install chromium &amp;&amp; npm test   # 4 сценария, свежая база</code></pre>
+<p class="small">Пароль демо-персон: <code>demo-pass-2026</code>; на <a href="https://pitcairn.shelfcompass.com/demo">/demo</a> можно переключаться между ролями без пароля.</p>
+
+</body>
+</html>
