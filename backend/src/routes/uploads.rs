@@ -290,7 +290,7 @@ async fn complete_upload(
     let mut tx = state.pool.begin().await?;
     let now = now_rfc3339();
     let file_id = new_id();
-    let storage_key = files::file_path(&state.config.data_dir, &row.sha256)
+    let storage_key = files::file_path(&state.config.data_dir, &row.sha256)?
         .to_string_lossy()
         .to_string();
     sqlx::query(

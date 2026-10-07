@@ -45,8 +45,13 @@ impl Actor {
     /// Staff members and experts must complete TOTP MFA before any non-auth
     /// endpoint works (enforced by the MFA gate middleware).
     pub fn needs_mfa(&self) -> bool {
-        (self.is_staff() || self.is_expert()) && !self.mfa_verified
+        self.roles.iter().any(|r| role_requires_mfa(r)) && !self.mfa_verified
     }
+}
+
+/// Staff roles and `expert` require TOTP MFA (§3).
+pub fn role_requires_mfa(role: &str) -> bool {
+    role == "expert" || STAFF_ROLES.contains(&role)
 }
 
 /// Require one of the given roles; 403 otherwise.
@@ -89,6 +94,7 @@ where
     E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
 {
     // One round trip: active membership + non-declined expert assignment.
+    // An assignment only counts while the user still holds the expert role.
     let (member_role, expert_count): (Option<String>, i64) = sqlx::query_as(
         "SELECT (SELECT role FROM project_members
                   WHERE project_id = ? AND user_id = ? AND removed_at IS NULL LIMIT 1),
@@ -111,7 +117,7 @@ where
     if actor.is_staff() {
         return Ok(ProjectAccess::Staff);
     }
-    if expert_count > 0 {
+    if expert_count > 0 && actor.is_expert() {
         return Ok(ProjectAccess::Expert);
     }
     Ok(ProjectAccess::None)

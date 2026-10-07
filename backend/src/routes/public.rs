@@ -8,7 +8,6 @@
 //! include personal documents, internal threads, expert opinions, invoices,
 //! application answers or audit events.
 
-use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, Response, StatusCode, header};
 use axum::response::IntoResponse;
@@ -81,21 +80,74 @@ fn parse_bbox(bbox: &str) -> Option<(f64, f64, f64, f64)> {
     Some((v[0], v[1], v[2], v[3]))
 }
 
+/// Snap a bbox outward to the 0.1° grid (§4): the bounds the public sees
+/// for a sensitive site. `[min_lat, min_lng, max_lat, max_lng]`.
+fn generalized_bounds(min_lat: f64, min_lng: f64, max_lat: f64, max_lng: f64) -> [f64; 4] {
+    let f = |x: f64| (x * 10.0).floor() / 10.0;
+    let c = |x: f64| (x * 10.0).ceil() / 10.0;
+    [f(min_lat), f(min_lng), c(max_lat), c(max_lng)]
+}
+
 /// A site generalized to its 0.1°-grid bbox (§4) — the geometry the public
 /// and any viewer without precise-location rights sees.
 fn generalized_geometry(min_lat: f64, min_lng: f64, max_lat: f64, max_lng: f64) -> Value {
-    let f = |x: f64| (x * 10.0).floor() / 10.0;
-    let c = |x: f64| (x * 10.0).ceil() / 10.0;
+    let [min_lat, min_lng, max_lat, max_lng] =
+        generalized_bounds(min_lat, min_lng, max_lat, max_lng);
     json!({
         "type": "Polygon",
         "coordinates": [[
-            [f(min_lng), f(min_lat)],
-            [c(max_lng), f(min_lat)],
-            [c(max_lng), c(max_lat)],
-            [f(min_lng), c(max_lat)],
-            [f(min_lng), f(min_lat)],
+            [min_lng, min_lat],
+            [max_lng, min_lat],
+            [max_lng, max_lat],
+            [min_lng, max_lat],
+            [min_lng, min_lat],
         ]],
     })
+}
+
+/// Published files of a deliverable: listed in `publication_files`, a
+/// `result` document of the deliverable's own project, scan `clean`. The
+/// public listing and the public download use the same rule.
+const PUBLIC_FILE_JOINS: &str = "FROM publication_files pf
+     JOIN deliverables del ON del.id = pf.deliverable_id
+     JOIN document_versions dv ON dv.id = pf.document_version_id
+     JOIN documents d ON d.id = dv.document_id AND d.project_id = del.project_id
+     JOIN files f ON f.id = dv.file_id
+     WHERE d.category = 'result' AND f.scan_status = 'clean'";
+
+/// Ids of visible projects with a site intersecting the query bbox, where
+/// sensitive sites match by their generalized bounds only — exactly the
+/// geometry the response shows, so repeated narrowing reveals nothing more.
+async fn projects_in_bbox(
+    pool: &SqlitePool,
+    (min_lng, min_lat, max_lng, max_lat): (f64, f64, f64, f64),
+) -> AppResult<Vec<String>> {
+    let sites: Vec<(String, f64, f64, f64, f64, i64)> = sqlx::query_as(&format!(
+        "SELECT s.project_id, s.min_lat, s.min_lng, s.max_lat, s.max_lng, s.sensitive
+         FROM project_sites s JOIN projects p ON p.id = s.project_id WHERE {VISIBLE}"
+    ))
+    .fetch_all(pool)
+    .await?;
+    let mut ids: Vec<String> = sites
+        .into_iter()
+        .filter_map(
+            |(project_id, s_min_lat, s_min_lng, s_max_lat, s_max_lng, sensitive)| {
+                let [s_min_lat, s_min_lng, s_max_lat, s_max_lng] = if sensitive != 0 {
+                    generalized_bounds(s_min_lat, s_min_lng, s_max_lat, s_max_lng)
+                } else {
+                    [s_min_lat, s_min_lng, s_max_lat, s_max_lng]
+                };
+                (s_min_lng <= max_lng
+                    && s_max_lng >= min_lng
+                    && s_min_lat <= max_lat
+                    && s_max_lat >= min_lat)
+                    .then_some(project_id)
+            },
+        )
+        .collect();
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
 }
 
 async fn load_public_project(
@@ -160,15 +212,11 @@ async fn load_public_project(
             None
         };
         let files = if embargo_open {
-            sqlx::query_as::<_, (String, String, i64, String)>(
+            sqlx::query_as::<_, (String, String, i64, String)>(&format!(
                 "SELECT pf.document_version_id, d.title, f.size, f.mime
-                 FROM publication_files pf
-                 JOIN document_versions dv ON dv.id = pf.document_version_id
-                 JOIN documents d ON d.id = dv.document_id
-                 JOIN files f ON f.id = dv.file_id
-                 WHERE pf.deliverable_id = ?
-                 ORDER BY d.title",
-            )
+                 {PUBLIC_FILE_JOINS} AND pf.deliverable_id = ?
+                 ORDER BY d.title"
+            ))
             .bind(&d.id)
             .fetch_all(pool)
             .await?
@@ -238,7 +286,6 @@ async fn list_projects(
     );
     let mut count_sql = format!("SELECT COUNT(*) FROM projects p WHERE {VISIBLE}");
     let mut binds: Vec<String> = Vec::new();
-    let mut float_binds: Vec<f64> = Vec::new();
 
     if let Some(q) = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
         // Phrase-match the input on the FTS index; quotes are stripped so
@@ -255,21 +302,17 @@ async fn list_projects(
         count_sql.push_str(" AND substr(p.start_date, 1, 4) = ?");
         binds.push(year.to_string());
     }
-    if let Some((min_lng, min_lat, max_lng, max_lat)) = bbox {
-        let clause = " AND EXISTS (SELECT 1 FROM project_sites s
-            WHERE s.project_id = p.id AND s.min_lng <= ? AND s.max_lng >= ?
-              AND s.min_lat <= ? AND s.max_lat >= ?)";
+    if let Some(bbox) = bbox {
+        let ids = projects_in_bbox(&state.pool, bbox).await?;
+        let clause = " AND p.id IN (SELECT value FROM json_each(?))";
         sql.push_str(clause);
         count_sql.push_str(clause);
-        float_binds.extend([max_lng, min_lng, max_lat, min_lat]);
+        binds.push(Value::from(ids).to_string());
     }
 
     let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
     for b in &binds {
         count_q = count_q.bind(b);
-    }
-    for f in &float_binds {
-        count_q = count_q.bind(f);
     }
     let total = count_q.fetch_one(&state.pool).await?;
 
@@ -277,9 +320,6 @@ async fn list_projects(
     let mut rows_q = sqlx::query_as::<_, CatalogProjectRow>(&sql);
     for b in &binds {
         rows_q = rows_q.bind(b);
-    }
-    for f in &float_binds {
-        rows_q = rows_q.bind(f);
     }
     let rows: Vec<CatalogProjectRow> = rows_q
         .bind(limit)
@@ -316,22 +356,19 @@ async fn download_file(
 ) -> AppResult<impl IntoResponse> {
     require_catalog_enabled(&state.pool).await?;
     let today = crate::deliverables::today();
-    // Only publication_files of metadata_and_files deliverables whose
+    // Only `result` documents of the deliverable's own project, scan-clean,
+    // listed in publication_files of metadata_and_files deliverables whose
     // embargo passed, on non-withdrawn projects. Anything else is a plain
     // 404 — existence is never revealed (§5).
-    let row: Option<(String, String, i64, String)> = sqlx::query_as(
+    let row: Option<(String, String, i64, String)> = sqlx::query_as(&format!(
         "SELECT d.title, f.sha256, f.size, f.mime
-         FROM publication_files pf
-         JOIN document_versions dv ON dv.id = pf.document_version_id
-         JOIN documents d ON d.id = dv.document_id
-         JOIN files f ON f.id = dv.file_id
-         JOIN deliverables del ON del.id = pf.deliverable_id
-         JOIN projects p ON p.id = del.project_id
-         WHERE pf.document_version_id = ?
+         {PUBLIC_FILE_JOINS}
+           AND pf.document_version_id = ?
            AND del.publish_level = 'metadata_and_files'
            AND (del.embargo_until IS NULL OR del.embargo_until <= ?)
-           AND p.status != 'withdrawn'",
-    )
+           AND EXISTS (SELECT 1 FROM projects p
+                       WHERE p.id = del.project_id AND p.status != 'withdrawn')"
+    ))
     .bind(&document_version_id)
     .bind(&today)
     .fetch_optional(&state.pool)
@@ -340,7 +377,7 @@ async fn download_file(
         return Err(AppError::NotFound);
     };
 
-    let bytes = crate::files::read_file(&state.config.data_dir, &sha256).await?;
+    let (body, len) = crate::files::stream_file(&state.config.data_dir, &sha256).await?;
     let filename: String = title
         .chars()
         .filter(|c| c.is_ascii())
@@ -358,7 +395,9 @@ async fn download_file(
         filename
     };
 
-    let mut resp = Response::new(Body::from(bytes));
+    let mut resp = Response::new(body);
+    resp.headers_mut()
+        .insert(header::CONTENT_LENGTH, HeaderValue::from(len));
     *resp.status_mut() = StatusCode::OK;
     resp.headers_mut().insert(
         header::CONTENT_TYPE,

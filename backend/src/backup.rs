@@ -259,7 +259,7 @@ pub async fn restore(from: &Path, data_dir: &Path, force: bool) -> AppResult<Bac
     for sha in shas {
         sqlx::query("UPDATE files SET storage_key = ? WHERE sha256 = ?")
             .bind(
-                crate::files::file_path(data_dir, &sha)
+                crate::files::file_path(data_dir, &sha)?
                     .to_string_lossy()
                     .to_string(),
             )

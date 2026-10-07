@@ -348,12 +348,16 @@ async fn project_reviews(
 }
 
 /// Load `(project_id, status)` of the actor's OWN assignment; anyone else's
-/// assignment is 404 (do not reveal it).
+/// assignment is 404 (do not reveal it). The assignment only counts while
+/// the actor still holds the `expert` role.
 async fn own_assignment(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     actor: &Actor,
     id: &str,
 ) -> AppResult<(String, String, String)> {
+    if !actor.is_expert() {
+        return Err(AppError::forbidden("reviews require the expert role"));
+    }
     let row: Option<(String, String, String, String)> = sqlx::query_as(
         "SELECT ra.project_id, ra.status, ra.expert_id, p.title
          FROM review_assignments ra JOIN projects p ON p.id = ra.project_id WHERE ra.id = ?",

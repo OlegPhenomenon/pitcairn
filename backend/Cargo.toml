@@ -7,6 +7,7 @@ edition = "2024"
 axum = { version = "0.8", features = ["macros"] }
 sqlx = { version = "0.8", features = ["sqlite", "migrate", "macros", "runtime-tokio"] }
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
 tower-http = { version = "0.6", features = ["fs", "trace", "compression-gzip", "set-header"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -1,4 +1,3 @@
-use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{HeaderValue, Response, StatusCode, header};
 use axum::response::IntoResponse;
@@ -394,11 +393,13 @@ async fn download_version(
         ));
     }
 
-    let bytes = crate::files::read_file(&state.config.data_dir, &row.sha256).await?;
+    let (body, len) = crate::files::stream_file(&state.config.data_dir, &row.sha256).await?;
     let filename = safe_filename(&row.title);
     let disposition = format!("attachment; filename=\"{}\"", filename);
 
-    let mut resp = Response::new(Body::from(bytes));
+    let mut resp = Response::new(body);
+    resp.headers_mut()
+        .insert(header::CONTENT_LENGTH, HeaderValue::from(len));
     *resp.status_mut() = StatusCode::OK;
     resp.headers_mut().insert(
         header::CONTENT_TYPE,

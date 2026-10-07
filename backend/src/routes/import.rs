@@ -5,9 +5,10 @@
 //! `{"file_id": "..."}` naming a file uploaded through `/uploads` by the same
 //! admin — that file must have passed the scan (`clean`) before it is parsed.
 
-use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::body::{Body, Bytes};
+use axum::extract::{DefaultBodyLimit, Path, Request, State};
 use axum::http::{HeaderMap, HeaderValue, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -36,7 +37,29 @@ pub fn router(state: AppState) -> Router<AppState> {
             post(archive_preview).route_layer(DefaultBodyLimit::max(archive_limit)),
         )
         .route("/admin/import/{batch_id}/commit", post(commit_batch))
+        .route_layer(axum::middleware::from_fn_with_state(
+            state,
+            admin_import_gate,
+        ))
         .route("/projects/{id}/export", get(export_project))
+}
+
+/// Runs BEFORE the handler extracts the body: non-admins are rejected
+/// without a single body byte being buffered, and admins hold the single
+/// import slot so at most one import body/archive is in memory at a time.
+async fn admin_import_gate(
+    State(state): State<AppState>,
+    actor: Actor,
+    req: Request<Body>,
+    next: Next,
+) -> AppResult<Response> {
+    authz::require_role(&actor, &["admin"])?;
+    let _slot = state
+        .import_slots
+        .acquire()
+        .await
+        .map_err(AppError::internal)?;
+    Ok(next.run(req).await)
 }
 
 #[derive(Deserialize)]

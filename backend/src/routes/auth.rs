@@ -82,20 +82,22 @@ fn clear_cookie_header() -> String {
     )
 }
 
-async fn create_session(pool: &SqlitePool, user_id: &str, mfa_verified: i64) -> AppResult<String> {
+/// New sessions start MFA-unverified: `mfa_verified` records an actual TOTP
+/// verification, never "MFA not required" — so a later promotion to a
+/// staff/expert role cannot ride on a session that never verified.
+async fn create_session(pool: &SqlitePool, user_id: &str) -> AppResult<String> {
     let token = random_token();
     let session_id = sha256_hex(token.as_bytes());
     let now = now_rfc3339();
     let expires = time_plus_secs(30 * 24 * 3600);
     sqlx::query(
         "INSERT INTO sessions (id, user_id, created_at, expires_at, mfa_verified, via_demo_switch)
-         VALUES (?, ?, ?, ?, ?, 0)",
+         VALUES (?, ?, ?, ?, 0, 0)",
     )
     .bind(&session_id)
     .bind(user_id)
     .bind(&now)
     .bind(&expires)
-    .bind(mfa_verified)
     .execute(pool)
     .await?;
     Ok(token)
@@ -147,7 +149,7 @@ async fn register(
     .execute(&state.pool)
     .await?;
 
-    let token = create_session(&state.pool, &user_id, 1).await?;
+    let token = create_session(&state.pool, &user_id).await?;
     let user = load_user_dto(&state.pool, &user_id).await?;
     Ok((
         StatusCode::OK,
@@ -219,14 +221,8 @@ async fn login(
             .bind(&user_id)
             .fetch_all(&state.pool)
             .await?;
-    let requires_mfa = roles.iter().any(|r| {
-        matches!(
-            r.as_str(),
-            "coordinator" | "decision_maker" | "base_manager" | "finance" | "admin" | "expert"
-        )
-    });
-    let mfa_verified = if requires_mfa { 0 } else { 1 };
-    let token = create_session(&state.pool, &user_id, mfa_verified).await?;
+    let requires_mfa = roles.iter().any(|r| authz::role_requires_mfa(r));
+    let token = create_session(&state.pool, &user_id).await?;
     let user = load_user_dto(&state.pool, &user_id).await?;
 
     Ok((
