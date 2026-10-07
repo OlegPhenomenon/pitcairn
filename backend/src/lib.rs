@@ -1,5 +1,8 @@
+pub mod archive;
+pub mod assist;
 pub mod audit;
 pub mod authz;
+pub mod backup;
 pub mod config;
 pub mod db;
 pub mod dto;
@@ -7,6 +10,7 @@ pub mod error;
 pub mod files;
 pub mod idempotency;
 pub mod jobs;
+pub mod legacy;
 pub mod mail;
 pub mod notify;
 pub mod password;

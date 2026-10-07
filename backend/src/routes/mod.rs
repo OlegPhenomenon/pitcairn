@@ -7,11 +7,15 @@ use axum::Router;
 use crate::AppState;
 
 pub mod admin;
+pub mod assist;
 pub mod auth;
+pub mod dashboard;
 pub mod demo;
 pub mod documents;
+pub mod import;
 pub mod notifications;
 pub mod projects;
+pub mod search;
 pub mod uploads;
 
 pub fn api_router(state: AppState) -> Router<AppState> {
@@ -23,4 +27,8 @@ pub fn api_router(state: AppState) -> Router<AppState> {
         .merge(notifications::router())
         .merge(admin::router(state.clone()))
         .merge(demo::router(state.clone()))
+        .merge(dashboard::router())
+        .merge(search::router())
+        .merge(assist::router())
+        .merge(import::router(state.clone()))
 }

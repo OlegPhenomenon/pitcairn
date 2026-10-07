@@ -3,6 +3,8 @@
 //! Later slices extend this module with more domain data (resources, tariffs,
 //! historic projects).
 
+pub mod history;
+
 use serde_json::json;
 use sqlx::SqlitePool;
 
@@ -461,5 +463,6 @@ pub async fn seed_demo(pool: &SqlitePool) -> AppResult<()> {
         }
     }
 
+    history::seed(pool, &password_hash).await?;
     Ok(())
 }

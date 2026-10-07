@@ -10,6 +10,8 @@
 //! Later slices add kinds `check_link` and `deliverable_reminders` as new
 //! arms in `execute`.
 
+pub mod reminders;
+
 use serde_json::Value;
 
 use crate::AppState;
@@ -169,6 +171,7 @@ async fn execute(state: &AppState, job: &JobRow) -> AppResult<()> {
             scan_file(state, file_id).await
         }
         KIND_CLEANUP_UPLOADS => cleanup_uploads(state).await,
+        reminders::KIND => reminders::run(&state.pool, &payload).await,
         // Later slices add: "check_link", "deliverable_reminders".
         other => Err(AppError::BadRequest(format!("unknown job kind: {other}"))),
     }
