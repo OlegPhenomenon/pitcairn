@@ -1,7 +1,7 @@
 import { Link, Outlet, useOutletContext, useParams } from 'react-router';
 
 import { ApiError } from '../../api/client';
-import type { MeResponse, ProjectDto } from '../../api/types';
+import type { MeResponse, ProjectWorkspaceDto } from '../../api/types';
 import {
   Banner,
   Card,
@@ -19,6 +19,7 @@ import { useProject } from './api';
 const TAB_DEFS = [
   { key: 'overview', label: 'Overview' },
   { key: 'application', label: 'Application' },
+  { key: 'revisions', label: 'Revisions' },
   { key: 'team', label: 'Team' },
   { key: 'messages', label: 'Messages' },
   { key: 'review', label: 'Review' },
@@ -48,7 +49,7 @@ export function ProjectLayout() {
             {err instanceof ApiError && err.status === 404
               ? 'Project not found.'
               : err instanceof ApiError && err.status === 403
-                ? 'You do not have access to this project.'
+                ? err.message
                 : 'Could not load the project.'}
           </Banner>
           <p className="mt-3">
@@ -78,7 +79,7 @@ export function ProjectLayout() {
             {me.data?.demo_mode && ' · demo'}
           </>
         }
-        actions={<StatusBadge status={p.status} className="text-sm" />}
+        actions={<StatusBadge status={p.status} label={p.status === 'approved' ? 'Permit decision issued' : undefined} className="text-sm" />}
       />
       {project.data.primary_message && (
         <Banner tone="warning" className="mb-4">
@@ -87,14 +88,15 @@ export function ProjectLayout() {
       )}
       <Tabs tabs={tabs} ariaLabel="Project sections" />
       <div className="pt-5">
-        <Outlet context={{ project: p, me: me.data } satisfies ProjectContext} />
+        <Outlet context={{ workspace: project.data, project: p, me: me.data } satisfies ProjectContext} />
       </div>
     </>
   );
 }
 
 interface ProjectContext {
-  project: ProjectDto;
+  workspace: ProjectWorkspaceDto;
+  project: ProjectWorkspaceDto['project'];
   me: MeResponse | undefined;
 }
 

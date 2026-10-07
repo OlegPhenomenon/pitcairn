@@ -14,6 +14,7 @@ import { providerRoutes } from '../features/provider/routes';
 import { financeRoutes } from '../features/finance/routes';
 import { bankRoutes } from '../features/bank/routes';
 import { resourceRoutes } from '../features/resources/routes';
+import { reviewRoutes } from '../features/review/routes';
 
 export const router = createBrowserRouter([
   { path: '/', element: <LandingPage />, errorElement: <ErrorPage /> },
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
     children: [
       ...dashboardRoutes,
       ...projectRoutes,
+      ...reviewRoutes,
       ...adminRoutes,
       ...demoRoutes,
       ...calendarRoutes,

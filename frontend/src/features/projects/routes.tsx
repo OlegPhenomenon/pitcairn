@@ -1,7 +1,16 @@
 import type { RouteObject } from 'react-router';
 
 import { NewProjectPage } from './NewProjectPage';
-import { OverviewTab } from './OverviewTab';
+import { OverviewTab } from '../application/OverviewTab';
+import { ApplicationTab } from '../application/ApplicationTab';
+import { RevisionsTab } from '../application/RevisionsTab';
+import { TeamTab } from '../team/TeamTab';
+import { MessagesTab } from '../conversation/MessagesTab';
+import { ReviewTab } from '../review/ReviewTab';
+import { DecisionsTab } from '../decisions/DecisionsTab';
+import { ChangesTab } from '../changes/ChangesTab';
+import { HistoryTab } from '../history/HistoryTab';
+import { SitesTab } from '../sites/SitesTab';
 import { ComingSoonTab, ProjectLayout } from './ProjectLayout';
 import { TripsTab } from '../trips/TripsTab';
 import { InvoicesTab } from '../finance/InvoicesTab';
@@ -16,18 +25,19 @@ export const projectRoutes: RouteObject[] = [
     children: [
       { index: true, element: <OverviewTab /> },
       { path: 'overview', element: <OverviewTab /> },
-      { path: 'application', element: comingSoon('application form') },
-      { path: 'team', element: comingSoon('team') },
-      { path: 'messages', element: comingSoon('messages') },
-      { path: 'review', element: comingSoon('expert review') },
-      { path: 'decisions', element: comingSoon('decisions') },
+      { path: 'application', element: <ApplicationTab /> },
+      { path: 'revisions', element: <RevisionsTab /> },
+      { path: 'team', element: <TeamTab /> },
+      { path: 'messages', element: <MessagesTab /> },
+      { path: 'review', element: <ReviewTab /> },
+      { path: 'decisions', element: <DecisionsTab /> },
       { path: 'trips', element: <TripsTab /> },
       { path: 'invoices', element: <InvoicesTab /> },
       { path: 'results', element: comingSoon('deliverables and results') },
       { path: 'samples', element: comingSoon('samples') },
-      { path: 'sites', element: comingSoon('sites map') },
-      { path: 'history', element: comingSoon('project history') },
-      { path: 'changes', element: comingSoon('change requests') },
+      { path: 'sites', element: <SitesTab /> },
+      { path: 'history', element: <HistoryTab /> },
+      { path: 'changes', element: <ChangesTab /> },
     ],
   },
 ];

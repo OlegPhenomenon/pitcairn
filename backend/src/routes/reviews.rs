@@ -16,10 +16,10 @@ use crate::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::authz::Actor;
 use crate::db;
-use crate::dto::ListResponse;
 use crate::dto::a::{
     CreateReviewRequest, DeclineRequest, ReviewAssignmentDto, SubmitOpinionRequest,
 };
+use crate::dto::{ListResponse, UserDto};
 use crate::error::{AppError, AppResult};
 use crate::notify;
 use crate::routes::projects::require_project_access;
@@ -33,9 +33,35 @@ pub fn router() -> Router<AppState> {
             post(assign_expert).get(project_reviews),
         )
         .route("/reviews", get(list_reviews))
+        .route("/review-experts", get(list_available_experts))
         .route("/reviews/{id}/accept", post(accept_review))
         .route("/reviews/{id}/decline", post(decline_review))
         .route("/reviews/{id}/submit", post(submit_review))
+}
+
+/// Coordinators need a safe picker of active experts to assign a review.
+async fn list_available_experts(
+    State(state): State<AppState>,
+    actor: Actor,
+) -> AppResult<Json<ListResponse<UserDto>>> {
+    if !actor.is_coordinator() {
+        return Err(AppError::forbidden(
+            "only coordinators can list available experts",
+        ));
+    }
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT u.id FROM users u JOIN user_roles r ON r.user_id = u.id
+         WHERE r.role = 'expert' AND r.revoked_at IS NULL AND u.disabled_at IS NULL
+         ORDER BY u.name",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let total = ids.len() as i64;
+    let mut items = Vec::with_capacity(ids.len());
+    for id in ids {
+        items.push(crate::routes::auth::load_user_dto(&state.pool, &id).await?);
+    }
+    Ok(Json(ListResponse { items, total }))
 }
 
 const RECOMMENDATIONS: &[&str] = &[

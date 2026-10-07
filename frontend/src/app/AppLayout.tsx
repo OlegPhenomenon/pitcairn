@@ -22,6 +22,7 @@ function navItems(me: MeResponse): NavItem[] {
     { to: '/app', label: 'Dashboard', icon: <FolderKanban className="size-4" />, end: true },
     { to: '/catalog', label: 'Catalog', icon: <Globe2 className="size-4" /> },
   ];
+  if (me.user.roles.includes('expert')) items.push({ to: '/app/reviews', label: 'My reviews' });
   if (me.demo_mode) {
     items.push({ to: '/app/demo/mailbox', label: 'Demo mailbox', icon: <Mail className="size-4" /> });
     if (me.user.roles.includes('finance')) items.push({ to: '/app/demo/bank', label: 'Bank simulator' });
