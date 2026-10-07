@@ -11,7 +11,7 @@ UI language: English. Demo data: fictional people, fictional amounts. All action
 ## 2. Stack and layout
 
 ```
-backend/     Rust 2024, axum 0.8, sqlx 0.9 (sqlite), tokio — single binary `pitcairn`
+backend/     Rust 2024, axum 0.8, sqlx 0.8 (sqlite), tokio — single binary `pitcairn`
 frontend/    React 19 + TypeScript + Vite, react-router 7, TanStack Query, Tailwind CSS 4,
              react-leaflet (OSM tiles), recharts, hash-wasm (incremental sha256)
 e2e/         Playwright end-to-end tests (story scenarios from section 12)

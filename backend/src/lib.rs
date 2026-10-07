@@ -10,6 +10,7 @@ pub mod jobs;
 pub mod mail;
 pub mod notify;
 pub mod password;
+pub mod projects;
 pub mod ratelimit;
 pub mod refs;
 pub mod routes;
