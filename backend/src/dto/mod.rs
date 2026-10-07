@@ -210,6 +210,8 @@ pub struct DocumentDto {
     pub created_by: String,
     pub created_at: String,
     pub latest_version: Option<DocumentVersionDto>,
+    /// All versions, newest first.
+    pub versions: Vec<DocumentVersionDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
