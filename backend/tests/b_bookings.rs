@@ -271,3 +271,19 @@ async fn bookings_confirm_only_on_approved_projects_and_within_trip_dates() {
         .await;
     assert_eq!(resp.status(), 403);
 }
+
+#[tokio::test]
+async fn researcher_can_read_resource_catalog_and_tariffs_for_booking_picker() {
+    let fx = fixture().await;
+    let resources = fx.anna.get("/api/v1/resources").await;
+    assert_eq!(resources.status(), 200);
+    let room = resource_id(&fx.app, ROOM).await;
+    let tariffs = fx
+        .anna
+        .get(&format!("/api/v1/resources/{room}/tariffs"))
+        .await;
+    assert_eq!(tariffs.status(), 200);
+    let anonymous = common::Client::anonymous(&fx.app);
+    assert_eq!(anonymous.get("/api/v1/resources").await.status(), 401);
+    assert_eq!(fx.anna.post_json("/api/v1/resources", &json!({"kind":"room","name":"No","quantity":1,"description":null,"unit_label":null,"provider_user_id":null,"active":true})).await.status(), 403);
+}

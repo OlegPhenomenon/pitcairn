@@ -3,6 +3,8 @@ import type { RouteObject } from 'react-router';
 import { NewProjectPage } from './NewProjectPage';
 import { OverviewTab } from './OverviewTab';
 import { ComingSoonTab, ProjectLayout } from './ProjectLayout';
+import { TripsTab } from '../trips/TripsTab';
+import { InvoicesTab } from '../finance/InvoicesTab';
 
 const comingSoon = (area: string) => <ComingSoonTab area={area} />;
 
@@ -19,8 +21,8 @@ export const projectRoutes: RouteObject[] = [
       { path: 'messages', element: comingSoon('messages') },
       { path: 'review', element: comingSoon('expert review') },
       { path: 'decisions', element: comingSoon('decisions') },
-      { path: 'trips', element: comingSoon('trips and bookings') },
-      { path: 'invoices', element: comingSoon('invoices') },
+      { path: 'trips', element: <TripsTab /> },
+      { path: 'invoices', element: <InvoicesTab /> },
       { path: 'results', element: comingSoon('deliverables and results') },
       { path: 'samples', element: comingSoon('samples') },
       { path: 'sites', element: comingSoon('sites map') },
