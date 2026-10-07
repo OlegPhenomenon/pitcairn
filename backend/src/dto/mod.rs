@@ -38,6 +38,13 @@ pub struct UserDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct CoordinatorDto {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
 pub struct MeResponse {
     pub user: UserDto,
     pub mfa_verified: bool,
@@ -933,6 +940,7 @@ pub struct AssistSummaryResponse {
 
 export_all!(
     UserDto,
+    CoordinatorDto,
     MeResponse,
     ListResponse<String>,
     ListQuery,

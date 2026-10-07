@@ -135,3 +135,17 @@ async fn dashboard_requires_login() {
     let anon = common::Client::anonymous(&app);
     assert_eq!(anon.get("/api/v1/dashboard").await.status(), 401);
 }
+
+#[tokio::test]
+async fn invoice_amounts_keep_cents_on_dashboard() {
+    let app = spawn_app(true).await;
+    sqlx::query(
+        "UPDATE invoice_lines SET amount_cents = 12345
+         WHERE invoice_id = (SELECT id FROM invoices WHERE status = 'draft' LIMIT 1)",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let d = dashboard(&app, "ruth").await;
+    assert!(mentions(section(&d, "invoices_to_issue"), "NZD 123.45"));
+}

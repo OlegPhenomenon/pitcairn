@@ -79,7 +79,7 @@ export function ProjectLayout() {
             {me.data?.demo_mode && ' · demo'}
           </>
         }
-        actions={<StatusBadge status={p.status} label={p.status === 'approved' ? 'Permit decision issued' : undefined} className="text-sm" />}
+        actions={<StatusBadge status={p.status} label={p.status === 'approved' ? 'Permit approved — see decision conditions' : undefined} className="text-sm" />}
       />
       {project.data.primary_message && (
         <Banner tone="warning" className="mb-4">
@@ -102,18 +102,4 @@ interface ProjectContext {
 
 export function useProjectContext(): ProjectContext {
   return useOutletContext<ProjectContext>();
-}
-
-/** Neutral placeholder for tabs implemented by later slices. */
-export function ComingSoonTab({ area }: { area: string }) {
-  return (
-    <Card>
-      <CardBody>
-        <h2 className="text-base font-semibold text-slate-800">Not available yet</h2>
-        <p className="mt-1 text-sm text-slate-600">
-          The {area} area arrives with a later backend slice. This tab will show it here.
-        </p>
-      </CardBody>
-    </Card>
-  );
 }

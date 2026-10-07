@@ -11,11 +11,11 @@ import { DecisionsTab } from '../decisions/DecisionsTab';
 import { ChangesTab } from '../changes/ChangesTab';
 import { HistoryTab } from '../history/HistoryTab';
 import { SitesTab } from '../sites/SitesTab';
-import { ComingSoonTab, ProjectLayout } from './ProjectLayout';
+import { ProjectLayout } from './ProjectLayout';
 import { TripsTab } from '../trips/TripsTab';
 import { InvoicesTab } from '../finance/InvoicesTab';
-
-const comingSoon = (area: string) => <ComingSoonTab area={area} />;
+import { ResultsTab } from '../results/ResultsTab';
+import { SamplesTab } from '../samples/SamplesTab';
 
 export const projectRoutes: RouteObject[] = [
   { path: 'projects/new', element: <NewProjectPage /> },
@@ -33,8 +33,8 @@ export const projectRoutes: RouteObject[] = [
       { path: 'decisions', element: <DecisionsTab /> },
       { path: 'trips', element: <TripsTab /> },
       { path: 'invoices', element: <InvoicesTab /> },
-      { path: 'results', element: comingSoon('deliverables and results') },
-      { path: 'samples', element: comingSoon('samples') },
+      { path: 'results', element: <ResultsTab /> },
+      { path: 'samples', element: <SamplesTab /> },
       { path: 'sites', element: <SitesTab /> },
       { path: 'history', element: <HistoryTab /> },
       { path: 'changes', element: <ChangesTab /> },

@@ -22,6 +22,7 @@ import { DocumentSlot } from '../upload/DocumentSlot';
 import { FileUpload } from '../upload/FileUpload';
 import { projectDocsKey, useCreateDocument, useProjectDocuments } from './api';
 import { useProjectContext } from './ProjectLayout';
+import { ProjectTools } from '../results/ProjectTools';
 
 const DOC_CATEGORIES = ['application', 'personal', 'decision', 'result', 'other'];
 
@@ -48,7 +49,7 @@ export function OverviewTab() {
           <KeyValue
             items={[
               { key: 'Reference', value: project.reference ?? 'Assigned on submit' },
-              { key: 'Status', value: <StatusBadge status={project.status} /> },
+              { key: 'Status', value: <StatusBadge status={project.status} label={project.status === 'approved' ? 'Permit approved — see decision conditions' : undefined} /> },
               { key: 'Organisation', value: project.organisation || '—' },
               {
                 key: 'Your access',
@@ -67,6 +68,7 @@ export function OverviewTab() {
           {project.keywords && (
             <p className="mt-2 text-xs text-slate-500">Keywords: {project.keywords}</p>
           )}
+          <ProjectTools />
         </CardBody>
       </Card>
 
