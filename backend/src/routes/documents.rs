@@ -364,9 +364,11 @@ async fn add_version(
 
 async fn download_version(
     State(state): State<AppState>,
-    actor: Actor,
+    actor: Result<Actor, AppError>,
     Path(version_id): Path<String>,
 ) -> AppResult<impl IntoResponse> {
+    // Do not reveal whether a private document URL exists to anonymous callers.
+    let actor = actor.map_err(|_| AppError::NotFound)?;
     let row: Option<VersionDownloadRow> = sqlx::query_as(
         "SELECT d.id as document_id, d.project_id, d.category, d.title,
                 f.sha256, f.size, f.mime, f.scan_status

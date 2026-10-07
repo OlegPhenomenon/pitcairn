@@ -85,6 +85,11 @@ async fn team_member_can_download_lead_document() {
         .get(&format!("/api/v1/document-versions/{version_id}/download"))
         .await;
     assert_eq!(liam_download.status(), 200);
+
+    let anonymous_download = Client::anonymous(&app)
+        .get(&format!("/api/v1/document-versions/{version_id}/download"))
+        .await;
+    assert_eq!(anonymous_download.status(), 404);
 }
 
 #[tokio::test]

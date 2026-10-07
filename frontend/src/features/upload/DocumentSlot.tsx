@@ -115,6 +115,7 @@ export function DocumentSlot({
             type="button"
             size="sm"
             variant="secondary"
+            aria-label={`${document ? 'Upload new version' : 'Upload'} — ${title}`}
             icon={<UploadCloud className="size-4" />}
             onClick={() => {
               setDocTitle(document?.title ?? title);
