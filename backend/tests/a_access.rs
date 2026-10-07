@@ -5,6 +5,27 @@ use common::{persona, spawn_app};
 use serde_json::json;
 
 #[tokio::test]
+async fn coordinator_can_pick_only_active_experts() {
+    let app = spawn_app(true).await;
+    let maria = persona(&app, "maria").await;
+    let anna = persona(&app, "anna").await;
+    let james = persona(&app, "james").await;
+    let (status, list) = get(&maria, "/review-experts").await;
+    assert_eq!(status, 200);
+    let ids: Vec<&str> = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|u| u["id"].as_str())
+        .collect();
+    let james_id = persona_id(&app, "james").await;
+    assert!(ids.contains(&james_id.as_str()));
+    assert!(!ids.contains(&persona_id(&app, "anna").await.as_str()));
+    assert_eq!(get(&anna, "/review-experts").await.0, 403);
+    assert_eq!(get(&james, "/review-experts").await.0, 403);
+}
+
+#[tokio::test]
 async fn expert_of_another_project_gets_403() {
     let app = spawn_app(true).await;
     let anna = persona(&app, "anna").await;
