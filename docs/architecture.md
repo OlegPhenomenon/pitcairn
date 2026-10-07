@@ -239,9 +239,9 @@ Single tokio worker loop, polls `jobs` every 2s, exponential backoff (30s × 2^a
 | anna | Dr Anna Hart | researcher, lead | Te Moana University (fictional), Wellington NZ |
 | liam, priya, tomasi | Liam Chen, Priya Nair, Tomasi Vea | team | same |
 | lukas | Dr Lukas Weber | researcher (second team) | North Sea Marine Lab (fictional) |
-| maria | Maria Ellis | coordinator | Pitcairn Islands Government — Natural Resources (demo) |
-| james | Dr James Okafor | expert | external reviewer |
-| helen | Helen Brooks | decision_maker | Pitcairn Islands Government (demo) |
+| maria | Maria Ellis | coordinator | Marine Science Base office, Natural Resources Division (demo) |
+| james | Dr James Okafor | expert | external reviewer, MSB Scientific Advisory Panel (demo) |
+| helen | Helen Brooks | decision_maker | Permits — acting for the Governor / MSB Board (demo) |
 | sam | Sam Torres | base_manager | Marine Science Base (demo) |
 | ruth | Ruth Palmer | finance | Pitcairn Islands Government (demo) |
 | david | David Lane | provider | "Bounty Bay Boat Hire" (fictional) |
