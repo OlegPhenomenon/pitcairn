@@ -1,0 +1,9 @@
+**/target
+**/node_modules
+frontend/dist
+data
+.git
+.orchestra
+.env*
+e2e/test-results
+e2e/playwright-report

@@ -1,0 +1,14 @@
+.orchestra/
+/target/
+backend/target/
+frontend/node_modules/
+frontend/dist/
+data/
+*.sqlite3
+*.sqlite3-*
+.env
+.env.*
+!.env.example
+.kamal/secrets*
+!.kamal/secrets.example
+.DS_Store

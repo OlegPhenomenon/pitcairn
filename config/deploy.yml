@@ -1,0 +1,35 @@
+service: pitcairn
+image: olegphenomenon/pitcairn
+servers:
+  web:
+    - 188.34.152.24
+proxy:
+  ssl: true
+  host: pitcairn.shelfcompass.com
+  app_port: 8080
+  healthcheck:
+    path: /up
+    interval: 3
+    timeout: 5
+registry:
+  server: ghcr.io
+  username: olegphenomenon
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+builder:
+  arch: arm64
+  # Build on the operator's arm64 Mac; the small server cannot do a Rust release build.
+  local: true
+  dockerfile: Dockerfile
+volumes:
+  - pitcairn_data:/var/lib/pitcairn
+env:
+  clear:
+    PITCAIRN_BASE_URL: https://pitcairn.shelfcompass.com
+    PITCAIRN_DEMO_MODE: "true"
+    PITCAIRN_SECURE_COOKIES: "true"
+    PITCAIRN_LINK_CHECK_MODE: mock
+    PITCAIRN_AI_MODE: mock
+  secret:
+    - PITCAIRN_SESSION_SECRET
+    - PITCAIRN_BANK_WEBHOOK_SECRET
