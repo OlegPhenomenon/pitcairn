@@ -7,8 +7,16 @@ use axum::Router;
 use crate::AppState;
 
 pub mod auth;
+pub mod documents;
+pub mod notifications;
+pub mod projects;
 pub mod uploads;
 
 pub fn api_router() -> Router<AppState> {
-    Router::new().merge(auth::router()).merge(uploads::router())
+    Router::new()
+        .merge(auth::router())
+        .merge(uploads::router())
+        .merge(projects::router())
+        .merge(documents::router())
+        .merge(notifications::router())
 }

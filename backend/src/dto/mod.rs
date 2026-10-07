@@ -3,6 +3,7 @@
 //! Regenerate with `pitcairn export-types` or `cargo test export_bindings`.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use ts_rs::TS;
 
 pub const EXPORT_DIR: &str = "frontend/src/api/generated/";
@@ -122,6 +123,110 @@ pub struct CompleteUploadResponse {
     pub scan_status: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct CreateProjectRequest {
+    pub template_key: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct ProjectDto {
+    pub id: String,
+    pub reference: Option<String>,
+    pub title: String,
+    pub summary: String,
+    pub keywords: String,
+    pub organisation: String,
+    pub status: String,
+    pub template_version_id: String,
+    #[ts(type = "Record<string, unknown>")]
+    pub answers: Value,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+    pub version: i64,
+    pub created_by: String,
+    pub created_at: String,
+    pub my_access: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct ProjectListItemDto {
+    pub id: String,
+    pub reference: Option<String>,
+    pub title: String,
+    pub status: String,
+    pub organisation: String,
+    pub created_at: String,
+    pub my_role: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct CreateDocumentRequest {
+    pub slot_key: Option<String>,
+    pub title: String,
+    pub category: String,
+    pub file_id: String,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct NewVersionRequest {
+    pub file_id: String,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct DocumentVersionDto {
+    pub id: String,
+    pub document_id: String,
+    pub number: i64,
+    pub file_id: String,
+    pub note: String,
+    pub uploaded_by: String,
+    pub uploaded_at: String,
+    pub scan_status: String,
+    pub size: i64,
+    pub mime: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct DocumentDto {
+    pub id: String,
+    pub project_id: String,
+    pub slot_key: Option<String>,
+    pub title: String,
+    pub category: String,
+    pub created_by: String,
+    pub created_at: String,
+    pub latest_version: Option<DocumentVersionDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct NotificationDto {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub body: String,
+    pub link: String,
+    pub project_id: Option<String>,
+    pub read_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct ReadAllResponse {
+    pub marked: i64,
+}
+
 impl ListQuery {
     pub fn limit(&self) -> i64 {
         self.limit.unwrap_or(50).clamp(1, 200)
@@ -146,4 +251,13 @@ export_all!(
     CreateUploadRequest,
     UploadStateDto,
     CompleteUploadResponse,
+    CreateProjectRequest,
+    ProjectDto,
+    ProjectListItemDto,
+    CreateDocumentRequest,
+    NewVersionRequest,
+    DocumentDto,
+    DocumentVersionDto,
+    NotificationDto,
+    ReadAllResponse,
 );
