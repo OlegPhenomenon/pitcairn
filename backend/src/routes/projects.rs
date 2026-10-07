@@ -847,19 +847,13 @@ async fn patch_project(
     if let Some(t) = &req.title {
         errors.require("title", t, "title must not be empty");
     }
-    let start = req.start_date.clone().unwrap_or(row.start_date.clone());
-    let end = req.end_date.clone().unwrap_or(row.end_date.clone());
+    let mut start = req.start_date.clone().unwrap_or(row.start_date.clone());
+    let mut end = req.end_date.clone().unwrap_or(row.end_date.clone());
     if let Some(Some(d)) = &req.start_date {
         errors.valid_date("start_date", d);
     }
     if let Some(Some(d)) = &req.end_date {
         errors.valid_date("end_date", d);
-    }
-    if let (Some(s), Some(e)) = (&start, &end)
-        && is_date(s)
-        && is_date(e)
-    {
-        errors.check("end_date", s <= e, "must not be before the start date");
     }
     if let Some(answers) = &req.answers {
         let (_, _, schema) = load_template_version(&mut *tx, &row.template_version_id).await?;
@@ -871,6 +865,22 @@ async fn patch_project(
                 .into_iter()
                 .collect();
         validate_answers(&schema, answers, &site_ids, &mut errors);
+        // The application's own date range ("Proposed dates on Pitcairn")
+        // is the project's period: search by year, overview, trip checks.
+        if let Some((s, e)) = answered_date_range(&schema, answers) {
+            if req.start_date.is_none() {
+                start = s;
+            }
+            if req.end_date.is_none() {
+                end = e;
+            }
+        }
+    }
+    if let (Some(s), Some(e)) = (&start, &end)
+        && is_date(s)
+        && is_date(e)
+    {
+        errors.check("end_date", s <= e, "must not be before the start date");
     }
     errors.finish()?;
 
@@ -907,7 +917,7 @@ async fn patch_project(
         ("summary", req.summary.is_some()),
         ("keywords", req.keywords.is_some()),
         ("organisation", req.organisation.is_some()),
-        ("dates", req.start_date.is_some() || req.end_date.is_some()),
+        ("dates", start != row.start_date || end != row.end_date),
         ("answers", req.answers.is_some()),
     ] {
         if present {
@@ -929,6 +939,29 @@ async fn patch_project(
         version: req.version + 1,
         saved_at: now_rfc3339(),
     }))
+}
+
+/// Start and end of the template's date-range answer. Answers are replaced
+/// as a whole, so a missing or null answer clears both dates; empty or
+/// malformed parts become None. None when the template has no date range.
+fn answered_date_range(
+    schema: &Value,
+    answers: &Value,
+) -> Option<(Option<String>, Option<String>)> {
+    let (key, _) = templates::schema_fields(schema)
+        .into_iter()
+        .find(|(_, def)| def.get("type").and_then(Value::as_str) == Some("daterange"))?;
+    let Some(range) = answers.get(&key).and_then(Value::as_object) else {
+        return Some((None, None));
+    };
+    let part = |k: &str| {
+        range
+            .get(k)
+            .and_then(Value::as_str)
+            .filter(|s| is_date(s))
+            .map(str::to_string)
+    };
+    Some((part("start"), part("end")))
 }
 
 // ---------------------------------------------------------------------------

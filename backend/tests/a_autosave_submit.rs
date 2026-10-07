@@ -95,6 +95,62 @@ async fn autosave_validates_answers_and_editability() {
     );
 }
 
+/// The application form only sends answers; its date-range answer must
+/// become the project's period, otherwise a new study is invisible to the
+/// search-by-year filter (spec §5 item 14).
+#[tokio::test]
+async fn date_range_answer_sets_project_dates_and_year_search_finds_it() {
+    let app = spawn_app(true).await;
+    let anna = persona(&app, "anna").await;
+    let maria = persona(&app, "maria").await;
+    let pid = create_project(&anna, "fieldwork_permit", "Dates from the form").await;
+    let v = project_version(&anna, &pid).await;
+    let (status, saved) = patch(
+        &anna,
+        &format!("/projects/{pid}"),
+        json!({"version": v, "answers": {"dates": {"start": "2031-02-03", "end": "2031-03-04"}}}),
+    )
+    .await;
+    assert_eq!(status, 200, "{saved}");
+    let (_, ws) = get(&anna, &format!("/projects/{pid}")).await;
+    assert_eq!(ws["project"]["start_date"], "2031-02-03");
+    assert_eq!(ws["project"]["end_date"], "2031-03-04");
+
+    let (status, found) = get(&maria, "/search/projects?year=2031").await;
+    assert_eq!(status, 200, "{found}");
+    assert!(
+        found["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == pid.as_str()),
+        "{found}"
+    );
+
+    // An end before the start is rejected, not stored.
+    let v = project_version(&anna, &pid).await;
+    let (status, _) = patch(
+        &anna,
+        &format!("/projects/{pid}"),
+        json!({"version": v, "answers": {"dates": {"start": "2031-05-01", "end": "2031-04-01"}}}),
+    )
+    .await;
+    assert_eq!(status, 422);
+
+    // Clearing the answer clears the project's period too.
+    let v = project_version(&anna, &pid).await;
+    let (status, _) = patch(
+        &anna,
+        &format!("/projects/{pid}"),
+        json!({"version": v, "answers": {"dates": null}}),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let (_, ws) = get(&anna, &format!("/projects/{pid}")).await;
+    assert!(ws["project"]["start_date"].is_null(), "{ws}");
+    assert!(ws["project"]["end_date"].is_null(), "{ws}");
+}
+
 #[tokio::test]
 async fn idempotent_double_submit_creates_one_revision() {
     let app = spawn_app(true).await;

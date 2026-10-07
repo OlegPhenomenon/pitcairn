@@ -108,7 +108,9 @@ async fn promotion_does_not_inherit_an_unverified_session() {
     assert_eq!(resp.status(), 200);
     assert_eq!(dashboard_status(&anna).await.0, 200);
     let anna_id = user_id(&app, "anna@demo.pitcairn.invalid").await;
-    let resp = admin
+    // Operational roles are the coordinator's to grant; MFA applies all the same.
+    let maria = persona(&app, "maria").await;
+    let resp = maria
         .post_json(
             &format!("/api/v1/admin/users/{anna_id}/roles"),
             &json!({"role": "expert"}),
@@ -120,7 +122,6 @@ async fn promotion_does_not_inherit_an_unverified_session() {
     assert_eq!(body["error"]["code"], "mfa_required");
 
     // Staff that already verified keep their session on a further grant.
-    let maria = persona(&app, "maria").await;
     let maria_id = user_id(&app, "maria@demo.pitcairn.invalid").await;
     let resp = admin
         .post_json(

@@ -28,7 +28,7 @@ env:
     PITCAIRN_BASE_URL: https://pitcairn.shelfcompass.com
     PITCAIRN_DEMO_MODE: "true"
     PITCAIRN_SECURE_COOKIES: "true"
-    PITCAIRN_LINK_CHECK_MODE: mock
+    PITCAIRN_LINK_CHECK_MODE: live
     PITCAIRN_AI_MODE: mock
   secret:
     - PITCAIRN_SESSION_SECRET

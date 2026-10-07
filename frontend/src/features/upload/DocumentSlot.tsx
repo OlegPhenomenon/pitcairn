@@ -17,7 +17,7 @@ export interface DocumentSlotProps {
   projectId: string;
   /** Existing document occupying this slot, if any. */
   document?: DocumentDto | null;
-  /** Full version list when an area supplies one; the current list API supplies latest only. */
+  /** Explicit version list (newest first); defaults to `document.versions`. */
   versions?: DocumentVersionDto[];
   /** Slot key from the template's required_documents (e.g. `safety_plan`). */
   slotKey?: string | null;
@@ -56,9 +56,11 @@ export function DocumentSlot({
   const [attaching, setAttaching] = useState(false);
 
   const version = document?.latest_version ?? null;
-  const visibleVersions = versions ?? (version ? [version] : []);
-  const uploaderName = (id: string) =>
-    id === me.data?.user.id ? 'you' : `user ${shortId(id)}`;
+  const visibleVersions = versions ?? (document?.versions?.length ? document.versions : version ? [version] : []);
+  const uploaderName = (item: DocumentVersionDto) =>
+    item.uploaded_by === me.data?.user.id
+      ? `${item.uploaded_by_name || 'You'} (you)`
+      : item.uploaded_by_name || `user ${shortId(item.uploaded_by)}`;
 
   const onFileReady = async (fileId: string) => {
     setAttaching(true);
@@ -129,9 +131,10 @@ export function DocumentSlot({
 
       {visibleVersions.length > 0 ? (
         <ul className="mt-3 border-t border-slate-100 pt-2">
-          {visibleVersions.map((item) => <li key={item.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-100 py-2 text-sm text-slate-700 last:border-0">
+          {visibleVersions.map((item, index) => <li key={item.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-100 py-2 text-sm text-slate-700 last:border-0">
             <span className="font-medium">v{toNum(item.number)}</span>
-            <span>by {uploaderName(item.uploaded_by)}</span>
+            {index === 0 && <Badge tone="teal">Current</Badge>}
+            <span>by {uploaderName(item)}</span>
             <span className="text-slate-500">{formatDateTime(item.uploaded_at)}</span>
             <span className="text-slate-500">{formatBytes(item.size)}</span>
             {item.scan_status === 'clean' ? (

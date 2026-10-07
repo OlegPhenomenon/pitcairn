@@ -1,5 +1,6 @@
-//! Import/export (§5 admin, §8): legacy CSV preview, project-archive preview,
-//! commit of either batch kind, and the project export ZIP.
+//! Import/export (§5 admin, §8): legacy preview (plain CSV, or ZIP with the
+//! CSV plus a `files/` folder of old documents/results), project-archive
+//! preview, commit of either batch kind, and the project export ZIP.
 //!
 //! Upload bodies are either the raw file bytes (CSV / ZIP) or JSON
 //! `{"file_id": "..."}` naming a file uploaded through `/uploads` by the same
@@ -19,22 +20,22 @@ use crate::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::authz::{self, Actor};
 use crate::dto::{
-    ArchiveImportPreviewResponse, ImportBatchDto, ImportCommitResponse, ImportRowPreviewDto,
-    LegacyImportPreviewResponse,
+    ArchiveImportPreviewResponse, ImportBatchDto, ImportCommitResponse, ImportFilePreviewDto,
+    ImportRowPreviewDto, LegacyImportPreviewResponse,
 };
 use crate::error::{AppError, AppResult};
 use crate::{archive, legacy};
 
 pub fn router(state: AppState) -> Router<AppState> {
-    let archive_limit = usize::try_from(state.config.max_upload_bytes).unwrap_or(usize::MAX);
+    let upload_limit = usize::try_from(state.config.max_upload_bytes).unwrap_or(usize::MAX);
     Router::new()
         .route(
             "/admin/import/legacy/preview",
-            post(legacy_preview).route_layer(DefaultBodyLimit::max(32 * 1024 * 1024)),
+            post(legacy_preview).route_layer(DefaultBodyLimit::max(upload_limit)),
         )
         .route(
             "/admin/import/project-archive",
-            post(archive_preview).route_layer(DefaultBodyLimit::max(archive_limit)),
+            post(archive_preview).route_layer(DefaultBodyLimit::max(upload_limit)),
         )
         .route("/admin/import/{batch_id}/commit", post(commit_batch))
         .route_layer(axum::middleware::from_fn_with_state(
@@ -118,9 +119,11 @@ fn batch_dto(id: String, kind: &str, status: &str, created_at: String) -> Import
 }
 
 // ---------------------------------------------------------------------------
-// Legacy CSV
+// Legacy CSV / ZIP
 // ---------------------------------------------------------------------------
 
+/// Legacy import preview: a plain CSV, or a ZIP with the CSV plus a `files/`
+/// folder holding the old documents and results the CSV references.
 async fn legacy_preview(
     State(state): State<AppState>,
     actor: Actor,
@@ -128,9 +131,31 @@ async fn legacy_preview(
     body: Bytes,
 ) -> AppResult<Json<LegacyImportPreviewResponse>> {
     authz::require_role(&actor, &["admin"])?;
-    let bytes = body_bytes(&state, &actor, &headers, body, "text/csv").await?;
-    let parsed = legacy::parse_csv(&bytes)?;
-    let rows = legacy::preview_rows(&state.pool, parsed).await?;
+    let declared = if legacy::is_zip(&body) {
+        "application/zip"
+    } else {
+        "text/csv"
+    };
+    let bytes = body_bytes(&state, &actor, &headers, body, declared).await?;
+    let rows = if legacy::is_zip(&bytes) {
+        let max = state.config.max_upload_bytes;
+        let bundle = tokio::task::spawn_blocking(move || {
+            legacy::parse_bundle(&bytes, max, archive::MAX_UNCOMPRESSED)
+        })
+        .await
+        .map_err(AppError::internal)??;
+        let parsed = legacy::parse_csv(&bundle.csv)?;
+        let src = legacy::FileSource {
+            files: &bundle.files,
+            data_dir: &state.config.data_dir,
+            max_file_bytes: max,
+            uploaded_by: &actor.user_id,
+        };
+        legacy::preview_bundle(&state.pool, parsed, &src).await?
+    } else {
+        let parsed = legacy::parse_csv(&bytes)?;
+        legacy::preview_rows(&state.pool, parsed).await?
+    };
     let preview = legacy::preview_json(&rows);
     let (id, created_at) =
         legacy::create_batch(&state.pool, legacy::KIND, &preview, &actor).await?;
@@ -143,6 +168,16 @@ async fn legacy_preview(
                 data: r.data,
                 errors: r.errors,
                 duplicate_of: r.duplicate_of,
+                files: r
+                    .files
+                    .into_iter()
+                    .map(|f| ImportFilePreviewDto {
+                        column: f.column,
+                        name: f.name,
+                        size: f.size,
+                        mime: f.mime,
+                    })
+                    .collect(),
             })
             .collect(),
     }))

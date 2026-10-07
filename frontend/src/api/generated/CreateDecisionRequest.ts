@@ -6,12 +6,18 @@ export type CreateDecisionRequest = {
  */
 kind: string, 
 /**
+ * Name of the permit; amendments/extensions inherit the superseded
+ * permit's name when left empty.
+ */
+title?: string, 
+/**
  * The revision being decided on — required.
  */
 project_revision_id: string, basis: string | null, legal_reference: string | null, valid_from: string | null, valid_to: string | null, permitted_activities: Array<string> | null, conditions: Array<string> | null, restrictions: Array<string> | null, 
 /**
  * Issued decision this one supersedes (required for amendment/extension/
- * revocation, and for a permit when a current one exists).
+ * revocation; optional for a permit that replaces one permit chain head).
+ * Only that one permit chain changes; other permits stay in force.
  */
 supersedes_id: string | null, change_request_id: string | null, 
 /**

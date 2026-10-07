@@ -494,6 +494,12 @@ pub struct DecisionDto {
     pub revision_number: i64,
     /// permit | refusal | amendment | extension | revocation
     pub kind: String,
+    /// Name of the permit ("Reef transect sampling"); amendments inherit it.
+    pub title: String,
+    /// Permit chain this decision belongs to: id of the permit that started
+    /// it. A project may hold several independent chains. None for drafts and
+    /// refusals.
+    pub chain_id: Option<String>,
     /// draft | issued (issued is immutable)
     pub status: String,
     pub basis: String,
@@ -524,6 +530,10 @@ pub struct DecisionDto {
 pub struct CreateDecisionRequest {
     /// permit | refusal | amendment | extension | revocation
     pub kind: String,
+    /// Name of the permit; amendments/extensions inherit the superseded
+    /// permit's name when left empty.
+    #[ts(optional)]
+    pub title: Option<String>,
     /// The revision being decided on — required.
     pub project_revision_id: String,
     pub basis: Option<String>,
@@ -534,7 +544,8 @@ pub struct CreateDecisionRequest {
     pub conditions: Option<Vec<String>>,
     pub restrictions: Option<Vec<String>>,
     /// Issued decision this one supersedes (required for amendment/extension/
-    /// revocation, and for a permit when a current one exists).
+    /// revocation; optional for a permit that replaces one permit chain head).
+    /// Only that one permit chain changes; other permits stay in force.
     pub supersedes_id: Option<String>,
     pub change_request_id: Option<String>,
     /// Signed copy: document version of category `decision` in this project.
@@ -545,6 +556,8 @@ pub struct CreateDecisionRequest {
 #[ts(export, export_to = "../../frontend/src/api/generated/")]
 pub struct PatchDecisionRequest {
     pub kind: Option<String>,
+    #[ts(optional)]
+    pub title: Option<String>,
     pub project_revision_id: Option<String>,
     pub basis: Option<String>,
     pub legal_reference: Option<String>,
@@ -567,6 +580,7 @@ pub struct PatchDecisionRequest {
 #[derive(Deserialize)]
 struct PatchDecisionRequestWire {
     kind: Option<String>,
+    title: Option<String>,
     project_revision_id: Option<String>,
     basis: Option<String>,
     legal_reference: Option<String>,
@@ -595,6 +609,7 @@ impl From<PatchDecisionRequestWire> for PatchDecisionRequest {
     fn from(wire: PatchDecisionRequestWire) -> Self {
         Self {
             kind: wire.kind,
+            title: wire.title,
             project_revision_id: wire.project_revision_id,
             basis: wire.basis,
             legal_reference: wire.legal_reference,
@@ -642,7 +657,8 @@ pub struct CreateChangeRequestRequest {
     pub kind: String,
     pub description: String,
     /// For reschedule_trip: {trip_id, new_arrive_date, new_depart_date}.
-    /// For extend_permit: {new_valid_to}.
+    /// For extend_permit: {decision_id, new_valid_to} — decision_id is the
+    /// permit in force to extend; other permits are not affected.
     #[ts(type = "Record<string, unknown>")]
     pub payload: Value,
 }
@@ -698,6 +714,7 @@ pub struct ImpactDeliverableDto {
 pub struct ImpactDecisionDto {
     pub id: String,
     pub kind: String,
+    pub title: String,
     pub status: String,
     pub valid_from: Option<String>,
     pub valid_to: Option<String>,

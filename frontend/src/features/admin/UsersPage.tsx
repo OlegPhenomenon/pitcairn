@@ -20,6 +20,8 @@ import {
   useToast,
 } from '../../ui';
 import { titleize } from '../../lib/format';
+import { useMe } from '../auth/api';
+import { manageableRoles } from './access';
 import {
   useAdminUsers,
   useCreateUser,
@@ -27,16 +29,6 @@ import {
   usePatchUser,
   useRevokeRole,
 } from './api';
-
-const ALL_ROLES = [
-  'coordinator',
-  'expert',
-  'decision_maker',
-  'base_manager',
-  'finance',
-  'admin',
-  'provider',
-];
 
 function errorText(err: unknown): string {
   if (err instanceof ApiError) {
@@ -46,12 +38,18 @@ function errorText(err: unknown): string {
       return 'Only an existing decision maker can grant decision_maker.';
     if (err.code === 'protected_role')
       return 'Only a decision maker can revoke decision_maker.';
+    if (err.code === 'cannot_grant_self')
+      return 'Nobody can grant roles to themselves — ask a colleague.';
     return err.message;
   }
   return 'Something went wrong.';
 }
 
 export function AdminUsersPage() {
+  const me = useMe();
+  const myRoles = me.data?.user.roles ?? [];
+  const isAdmin = myRoles.includes('admin');
+  const manageable = manageableRoles(myRoles);
   const [q, setQ] = useState('');
   const [search, setSearch] = useState('');
   const users = useAdminUsers(search);
@@ -71,11 +69,17 @@ export function AdminUsersPage() {
     <>
       <PageHeader
         title="Users"
-        subtitle="Accounts, roles and access."
+        subtitle={
+          isAdmin
+            ? 'Accounts, roles and access.'
+            : `Find people and manage the roles you are responsible for: ${manageable.map(titleize).join(', ')}.`
+        }
         actions={
-          <Button icon={<UserPlus className="size-4" />} onClick={() => setCreateOpen(true)}>
-            New user
-          </Button>
+          isAdmin && (
+            <Button icon={<UserPlus className="size-4" />} onClick={() => setCreateOpen(true)}>
+              New user
+            </Button>
+          )
         }
       />
       <Card>
@@ -146,24 +150,28 @@ export function AdminUsersPage() {
                     <Button size="sm" variant="ghost" onClick={() => setRolesFor(u)}>
                       Roles
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setEditUser(u)}>
-                      Edit
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      loading={patch.isPending && patch.variables?.id === u.id}
-                      onClick={async () => {
-                        try {
-                          await patch.mutateAsync({ id: u.id, name: null, organisation: null, email: null, disabled: !u.disabled });
-                          toast.success(u.disabled ? 'User re-enabled' : 'User disabled');
-                        } catch (e) {
-                          toast.error('Could not update user', errorText(e));
-                        }
-                      }}
-                    >
-                      {u.disabled ? 'Enable' : 'Disable'}
-                    </Button>
+                    {isAdmin && (
+                      <>
+                        <Button size="sm" variant="ghost" onClick={() => setEditUser(u)}>
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          loading={patch.isPending && patch.variables?.id === u.id}
+                          onClick={async () => {
+                            try {
+                              await patch.mutateAsync({ id: u.id, name: null, organisation: null, email: null, disabled: !u.disabled });
+                              toast.success(u.disabled ? 'User re-enabled' : 'User disabled');
+                            } catch (e) {
+                              toast.error('Could not update user', errorText(e));
+                            }
+                          }}
+                        >
+                          {u.disabled ? 'Enable' : 'Disable'}
+                        </Button>
+                      </>
+                    )}
                   </span>
                 ),
               },
@@ -174,7 +182,12 @@ export function AdminUsersPage() {
 
       <CreateUserDialog open={createOpen} onClose={() => setCreateOpen(false)} />
       <EditUserDialog user={editUser} onClose={() => setEditUser(null)} />
-      <RolesDialog user={rolesFor} onClose={() => setRolesFor(null)} />
+      <RolesDialog
+        user={rolesFor}
+        manageable={manageable}
+        isSelf={rolesFor?.id === me.data?.user.id}
+        onClose={() => setRolesFor(null)}
+      />
       {/* revoke errors are toasted via hook; surface revoke failures too */}
       {revoke.error && (
         <Banner tone="error" className="mt-3" onDismiss={() => revoke.reset()}>
@@ -313,10 +326,20 @@ function EditUserDialog({ user, onClose }: { user: UserDto | null; onClose: () =
   );
 }
 
-function RolesDialog({ user, onClose }: { user: UserDto | null; onClose: () => void }) {
+function RolesDialog({
+  user,
+  manageable,
+  isSelf,
+  onClose,
+}: {
+  user: UserDto | null;
+  manageable: string[];
+  isSelf: boolean;
+  onClose: () => void;
+}) {
   const grant = useGrantRole();
   const revoke = useRevokeRole();
-  const [role, setRole] = useState(ALL_ROLES[0]);
+  const [role, setRole] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [prevId, setPrevId] = useState<string | null>(null);
   if (user && user.id !== prevId) {
@@ -325,6 +348,9 @@ function RolesDialog({ user, onClose }: { user: UserDto | null; onClose: () => v
   }
 
   const busy = grant.isPending || revoke.isPending;
+  // Nobody grants themselves a role; only roles the user lacks are offered.
+  const grantable = isSelf || !user ? [] : manageable.filter((r) => !user.roles.includes(r));
+  const selected = grantable.includes(role) ? role : (grantable[0] ?? '');
 
   return (
     <Dialog
@@ -348,21 +374,23 @@ function RolesDialog({ user, onClose }: { user: UserDto | null; onClose: () => v
                   className="flex items-center justify-between rounded-md border border-slate-200 px-3 py-1.5 text-sm"
                 >
                   <span>{titleize(r)}</span>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={async () => {
-                      try {
-                        setErr(null);
-                        await revoke.mutateAsync({ userId: user.id, role: r });
-                      } catch (e) {
-                        setErr(errorText(e));
-                      }
-                    }}
-                  >
-                    Remove
-                  </Button>
+                  {manageable.includes(r) && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={async () => {
+                        try {
+                          setErr(null);
+                          await revoke.mutateAsync({ userId: user.id, role: r });
+                        } catch (e) {
+                          setErr(errorText(e));
+                        }
+                      }}
+                    >
+                      Remove
+                    </Button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -370,35 +398,38 @@ function RolesDialog({ user, onClose }: { user: UserDto | null; onClose: () => v
             <p className="text-sm text-slate-500">No roles — this is a plain researcher account.</p>
           )}
         </div>
-        <form
-          className="flex items-end gap-2"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (!user) return;
-            try {
-              setErr(null);
-              await grant.mutateAsync({ userId: user.id, role });
-            } catch (e2) {
-              setErr(errorText(e2));
-            }
-          }}
-        >
-          <FormField label="Add role" className="flex-1">
-            <Select value={role} onChange={(e) => setRole(e.target.value)}>
-              {ALL_ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {titleize(r)}
-                </option>
-              ))}
-            </Select>
-          </FormField>
-          <Button type="submit" size="md" loading={grant.isPending} icon={<Plus className="size-4" />}>
-            Add
-          </Button>
-        </form>
+        {grantable.length > 0 && (
+          <form
+            className="flex items-end gap-2"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!user || !selected) return;
+              try {
+                setErr(null);
+                await grant.mutateAsync({ userId: user.id, role: selected });
+              } catch (e2) {
+                setErr(errorText(e2));
+              }
+            }}
+          >
+            <FormField label="Add role" className="flex-1">
+              <Select value={selected} onChange={(e) => setRole(e.target.value)}>
+                {grantable.map((r) => (
+                  <option key={r} value={r}>
+                    {titleize(r)}
+                  </option>
+                ))}
+              </Select>
+            </FormField>
+            <Button type="submit" size="md" loading={grant.isPending} icon={<Plus className="size-4" />}>
+              Add
+            </Button>
+          </form>
+        )}
         <p className="text-xs text-slate-500">
-          Note: only an existing decision maker can grant or revoke the decision_maker role;
-          for everyone else the action returns <code>cannot_grant_decision_maker</code>.
+          {isSelf
+            ? 'You cannot grant roles to yourself.'
+            : `You can grant and remove: ${manageable.map(titleize).join(', ') || 'no roles'}. Only a decision maker grants decision_maker; the technical admin never can.`}
         </p>
       </div>
     </Dialog>

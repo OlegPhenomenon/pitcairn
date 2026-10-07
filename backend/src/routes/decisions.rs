@@ -40,9 +40,12 @@ pub fn router() -> Router<AppState> {
 }
 
 pub const KINDS: &[&str] = &["permit", "refusal", "amendment", "extension", "revocation"];
-/// Kinds that form the project's chain of permit-type decisions (at most one
-/// current, i.e. issued and not superseded).
+/// Kinds that form permit chains. A project may hold several independent
+/// chains (one per permit); each chain has at most one current decision
+/// (issued and not superseded). Changing one chain never touches the others.
 pub const PERMIT_CHAIN: &[&str] = &["permit", "amendment", "extension", "revocation"];
+/// Name given to a permit issued without one (matches migration 0500 backfill).
+const DEFAULT_PERMIT_TITLE: &str = "Research permit";
 
 #[derive(FromRow)]
 struct DecisionRow {
@@ -51,6 +54,8 @@ struct DecisionRow {
     project_revision_id: String,
     revision_number: i64,
     kind: String,
+    title: String,
+    chain_id: Option<String>,
     status: String,
     basis: String,
     legal_reference: String,
@@ -74,7 +79,7 @@ struct DecisionRow {
 
 const DECISION_SELECT: &str =
     "SELECT d.id, d.project_id, d.project_revision_id, r.number AS revision_number, d.kind,
-            d.status, d.basis, d.legal_reference, d.valid_from, d.valid_to,
+            d.title, d.chain_id, d.status, d.basis, d.legal_reference, d.valid_from, d.valid_to,
             d.permitted_activities_json, d.conditions_json, d.restrictions_json,
             d.sites_snapshot_json, d.document_version_id, d.supersedes_id, d.superseded_by_id,
             d.change_request_id, d.drafted_by, du.name AS drafted_by_name, d.issued_by,
@@ -98,6 +103,8 @@ fn decision_dto(r: DecisionRow, precise: bool) -> AppResult<DecisionDto> {
         project_revision_id: r.project_revision_id,
         revision_number: r.revision_number,
         kind: r.kind,
+        title: r.title,
+        chain_id: r.chain_id,
         status: r.status,
         basis: r.basis,
         legal_reference: r.legal_reference,
@@ -192,6 +199,7 @@ async fn get_decision(
 /// Fully resolved draft content (after applying a create or patch body).
 struct Draft {
     kind: String,
+    title: String,
     project_revision_id: String,
     basis: String,
     legal_reference: String,
@@ -229,6 +237,7 @@ async fn validate_draft(
         KINDS.contains(&d.kind.as_str()),
         &format!("must be one of {}", KINDS.join(", ")),
     );
+    errors.max_len("title", &d.title, 200);
     errors.max_len("basis", &d.basis, 20_000);
     errors.max_len("legal_reference", &d.legal_reference, 1000);
     for (field, v) in [("valid_from", &d.valid_from), ("valid_to", &d.valid_to)] {
@@ -349,6 +358,7 @@ async fn create_decision(
     require_drafter(&actor)?;
     let draft = Draft {
         kind: req.kind.trim().to_string(),
+        title: req.title.unwrap_or_default().trim().to_string(),
         project_revision_id: req.project_revision_id.trim().to_string(),
         basis: req.basis.unwrap_or_default().trim().to_string(),
         legal_reference: req.legal_reference.unwrap_or_default().trim().to_string(),
@@ -367,15 +377,16 @@ async fn create_decision(
     let id = new_id();
     sqlx::query(
         "INSERT INTO decisions
-         (id, project_id, project_revision_id, kind, status, basis, legal_reference, valid_from, valid_to,
-          permitted_activities_json, conditions_json, restrictions_json, sites_snapshot_json,
+         (id, project_id, project_revision_id, kind, title, status, basis, legal_reference, valid_from,
+          valid_to, permitted_activities_json, conditions_json, restrictions_json, sites_snapshot_json,
           document_version_id, supersedes_id, change_request_id, drafted_by, created_at)
-         VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&project_id)
     .bind(&draft.project_revision_id)
     .bind(&draft.kind)
+    .bind(&draft.title)
     .bind(&draft.basis)
     .bind(&draft.legal_reference)
     .bind(&draft.valid_from)
@@ -424,6 +435,7 @@ async fn patch_decision(
         // Issued decisions are immutable. The one exception: attaching the
         // uploaded signed copy once, when none is attached yet.
         let only_signed_copy = req.kind.is_none()
+            && req.title.is_none()
             && req.project_revision_id.is_none()
             && req.basis.is_none()
             && req.legal_reference.is_none()
@@ -445,6 +457,7 @@ async fn patch_decision(
         };
         let draft = Draft {
             kind: current.kind.clone(),
+            title: current.title.clone(),
             project_revision_id: current.project_revision_id.clone(),
             basis: current.basis.clone(),
             legal_reference: current.legal_reference.clone(),
@@ -481,6 +494,10 @@ async fn patch_decision(
                 .kind
                 .map(|k| k.trim().to_string())
                 .unwrap_or(current.kind),
+            title: req
+                .title
+                .map(|t| t.trim().to_string())
+                .unwrap_or(current.title),
             project_revision_id: req
                 .project_revision_id
                 .map(|r| r.trim().to_string())
@@ -522,13 +539,14 @@ async fn patch_decision(
         };
         validate_draft(&mut tx, &project_id, Some(&id), &draft).await?;
         sqlx::query(
-            "UPDATE decisions SET kind = ?, project_revision_id = ?, basis = ?, legal_reference = ?,
+            "UPDATE decisions SET kind = ?, title = ?, project_revision_id = ?, basis = ?, legal_reference = ?,
                     valid_from = ?, valid_to = ?, permitted_activities_json = ?, conditions_json = ?,
                     restrictions_json = ?, supersedes_id = ?, change_request_id = ?,
                     document_version_id = ?
              WHERE id = ? AND status = 'draft'",
         )
         .bind(&draft.kind)
+        .bind(&draft.title)
         .bind(&draft.project_revision_id)
         .bind(&draft.basis)
         .bind(&draft.legal_reference)
@@ -607,25 +625,43 @@ async fn issue_decision(
     }
     errors.finish()?;
 
-    let current: Option<String> = sqlx::query_scalar(&format!(
-        "SELECT id FROM decisions WHERE project_id = ? AND status = 'issued'
-           AND superseded_by_id IS NULL AND kind IN ({})",
-        PERMIT_CHAIN
-            .iter()
-            .map(|k| format!("'{k}'"))
-            .collect::<Vec<_>>()
-            .join(",")
-    ))
-    .bind(&project_id)
-    .fetch_optional(&mut *tx)
-    .await?;
     let status: String = sqlx::query_scalar("SELECT status FROM projects WHERE id = ?")
         .bind(&project_id)
         .fetch_one(&mut *tx)
         .await?;
+    // The decision being superseded must be the current head of one permit
+    // chain of this project. Only that chain changes.
+    let target: Option<(String, String, String)> = match &d.supersedes_id {
+        Some(s) => {
+            sqlx::query_as(
+                "SELECT kind, title, chain_id FROM decisions
+                 WHERE id = ? AND project_id = ? AND status = 'issued'
+                   AND superseded_by_id IS NULL AND chain_id IS NOT NULL",
+            )
+            .bind(s)
+            .bind(&project_id)
+            .fetch_optional(&mut *tx)
+            .await?
+        }
+        None => None,
+    };
+    if d.supersedes_id.is_some() && target.is_none() {
+        return Err(AppError::conflict(
+            "decision_superseded",
+            "the superseded decision is not a permit currently in force",
+        ));
+    }
+    if matches!(&target, Some((kind, _, _)) if kind == "revocation") {
+        return Err(AppError::conflict(
+            "invalid_supersession",
+            "a revoked permit cannot be changed; issue a new permit instead",
+        ));
+    }
 
     let transition = match d.kind.as_str() {
-        "permit" => Some(Action::Approve),
+        // A permit that starts a new chain approves the application; further
+        // independent permits on an approved project leave the status alone.
+        "permit" if target.is_none() && status != "approved" => Some(Action::Approve),
         "refusal" => Some(Action::Refuse),
         _ => None,
     };
@@ -636,16 +672,10 @@ async fn issue_decision(
                 "a refusal cannot supersede another decision",
             ));
         }
-        "permit" | "refusal" => {
-            if current.is_some() && d.supersedes_id != current {
-                return Err(AppError::conflict(
-                    "supersedes_required",
-                    "a permit is already in force; the new decision must supersede it",
-                ));
-            }
-        }
+        "refusal" => {}
+        "permit" if target.is_none() => {}
         _ => {
-            // amendment / extension / revocation of the permit in force.
+            // amendment / extension / revocation / replacement permit.
             if status != "approved" {
                 return Err(AppError::conflict(
                     "invalid_transition",
@@ -656,14 +686,28 @@ async fn issue_decision(
                     ),
                 ));
             }
-            if current.is_none() || d.supersedes_id != current {
+            if target.is_none() {
                 return Err(AppError::conflict(
                     "supersedes_required",
-                    "the decision must supersede the permit currently in force",
+                    "choose the permit in force that this decision changes",
                 ));
             }
         }
     }
+    let (chain_id, title) = match (&d.kind[..], &target) {
+        ("refusal", _) => (None, d.title.clone()),
+        (_, Some((_, old_title, chain))) => (
+            Some(chain.clone()),
+            if d.title.is_empty() {
+                old_title.clone()
+            } else {
+                d.title.clone()
+            },
+        ),
+        // Every chain carries a name so its later amendments stay recognisable.
+        (_, None) if d.title.is_empty() => (Some(id.clone()), DEFAULT_PERMIT_TITLE.to_string()),
+        (_, None) => (Some(id.clone()), d.title.clone()),
+    };
 
     let sites_snapshot = sites::project_sites(&mut *tx, &project_id)
         .await?
@@ -672,12 +716,15 @@ async fn issue_decision(
         .collect::<AppResult<Vec<_>>>()?;
     let now = now_rfc3339();
     sqlx::query(
-        "UPDATE decisions SET status = 'issued', issued_by = ?, issued_at = ?, sites_snapshot_json = ?
+        "UPDATE decisions SET status = 'issued', issued_by = ?, issued_at = ?, sites_snapshot_json = ?,
+                chain_id = ?, title = ?
          WHERE id = ? AND status = 'draft'",
     )
     .bind(&actor.user_id)
     .bind(&now)
     .bind(Value::Array(sites_snapshot).to_string())
+    .bind(&chain_id)
+    .bind(&title)
     .bind(&id)
     .execute(&mut *tx)
     .await?;
@@ -707,22 +754,28 @@ async fn issue_decision(
         &id,
         &project_id,
         "shared",
-        format!("{} issued a {} decision", actor.name, d.kind),
+        format!(
+            "{} issued a {} decision{}",
+            actor.name,
+            d.kind,
+            title_suffix(&title)
+        ),
     );
     event.after = Some(json!({
-        "kind": d.kind, "valid_from": d.valid_from, "valid_to": d.valid_to,
-        "supersedes_id": d.supersedes_id, "conditions": string_list(&d.conditions_json)?,
+        "kind": d.kind, "title": title, "chain_id": chain_id, "valid_from": d.valid_from,
+        "valid_to": d.valid_to, "supersedes_id": d.supersedes_id,
+        "conditions": string_list(&d.conditions_json)?,
     }));
     audit::record(&mut tx, event).await?;
 
-    let title: String = sqlx::query_scalar("SELECT title FROM projects WHERE id = ?")
+    let project_title: String = sqlx::query_scalar("SELECT title FROM projects WHERE id = ?")
         .bind(&project_id)
         .fetch_one(&mut *tx)
         .await?;
     let headline = match d.kind.as_str() {
-        "permit" => format!("Permit issued: {title}"),
-        "refusal" => format!("Application refused: {title}"),
-        k => format!("Permit {k} issued: {title}"),
+        "permit" => format!("Permit issued{}: {project_title}", title_suffix(&title)),
+        "refusal" => format!("Application refused: {project_title}"),
+        k => format!("Permit {k} issued{}: {project_title}", title_suffix(&title)),
     };
     let conditions = string_list(&d.conditions_json)?;
     let body = if conditions.is_empty() {
@@ -752,6 +805,14 @@ async fn issue_decision(
 
     let row = load_row(&state.pool, &id).await?;
     Ok(Json(decision_dto(row, true)?))
+}
+
+fn title_suffix(title: &str) -> String {
+    if title.is_empty() {
+        String::new()
+    } else {
+        format!(" ({title})")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -918,6 +979,7 @@ async fn decision_document(
   <dt>Organisation</dt><dd>{organisation}</dd>
   <dt>Lead researcher</dt><dd>{lead}</dd>
   <dt>Decision</dt><dd>{kind}</dd>
+  <dt>Permit</dt><dd>{permit}</dd>
   <dt>Validity</dt><dd>{validity}</dd>
   <dt>Application revision</dt><dd>#{revision}</dd>
   {supersedes}
@@ -941,6 +1003,11 @@ async fn decision_document(
         organisation = html_escape(&organisation),
         lead = html_escape(lead.as_deref().unwrap_or("—")),
         kind = html_escape(&dto.kind),
+        permit = html_escape(if dto.title.is_empty() {
+            "—"
+        } else {
+            &dto.title
+        }),
         validity = html_escape(&validity),
         revision = dto.revision_number,
         basis = html_escape(&dto.basis),

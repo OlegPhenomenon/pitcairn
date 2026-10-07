@@ -22,9 +22,9 @@ use crate::deliverables::{self, OPEN_STATUSES, PUBLICATION_WARNING};
 use crate::dto::{
     AcceptSubmissionResponse, CloseProjectRequest, CoordinatorDto, CreateDeliverableRequest,
     CreateSubmissionRequest, DeliverableDto, ExternalLinkDto, ListQuery, ListResponse, NoteRequest,
-    PublicationFilesResponse, PublicationUpdateResponse, ResultsSectionDto, SampleDto,
-    SetPublicationFilesRequest, SubmissionDto, SubmissionFileDto, UnresolvedDeliverableDto,
-    UpdateDeliverableRequest, UpdatePublicationRequest,
+    PublicationFilesResponse, PublicationUpdateResponse, ResultsSectionDto, SampleDeliverableDto,
+    SampleDto, SetPublicationFilesRequest, SubmissionDto, SubmissionFileDto,
+    UnresolvedDeliverableDto, UpdateDeliverableRequest, UpdatePublicationRequest,
 };
 use crate::error::{AppError, AppResult};
 use crate::util::{new_id, now_rfc3339};
@@ -194,8 +194,9 @@ struct ExternalLinkRow {
     version_label: String,
     access_notes: String,
     last_checked_at: Option<String>,
-    last_status: Option<String>,
-    available: Option<i64>,
+    check_status: String,
+    check_http_status: Option<i64>,
+    check_reason: String,
 }
 
 impl From<ExternalLinkRow> for ExternalLinkDto {
@@ -208,8 +209,9 @@ impl From<ExternalLinkRow> for ExternalLinkDto {
             version_label: r.version_label,
             access_notes: r.access_notes,
             last_checked_at: r.last_checked_at,
-            last_status: r.last_status,
-            available: r.available.map(|v| v != 0),
+            check_status: r.check_status,
+            check_http_status: r.check_http_status,
+            check_reason: r.check_reason,
         }
     }
 }
@@ -252,7 +254,7 @@ async fn submission_dto(pool: &SqlitePool, row: SubmissionRow) -> AppResult<Subm
 
     let links: Vec<ExternalLinkDto> = sqlx::query_as::<_, ExternalLinkRow>(
         "SELECT id, submission_id, url, description, version_label, access_notes,
-                last_checked_at, last_status, available
+                last_checked_at, check_status, check_http_status, check_reason
          FROM external_links WHERE submission_id = ? ORDER BY url",
     )
     .bind(&row.id)
@@ -262,11 +264,31 @@ async fn submission_dto(pool: &SqlitePool, row: SubmissionRow) -> AppResult<Subm
     .map(ExternalLinkDto::from)
     .collect();
 
+    // An accepted version stays `accepted` in storage; once a later
+    // correction is accepted it is shown as "superseded" (kept, downloadable).
+    let status = if row.status == "accepted" {
+        let newer_accepted: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM deliverable_submissions
+                            WHERE deliverable_id = ? AND status = 'accepted' AND number > ?)",
+        )
+        .bind(&row.deliverable_id)
+        .bind(row.number)
+        .fetch_one(pool)
+        .await?;
+        if newer_accepted {
+            "superseded".to_string()
+        } else {
+            row.status
+        }
+    } else {
+        row.status
+    };
+
     Ok(SubmissionDto {
         id: row.id,
         deliverable_id: row.deliverable_id,
         number: row.number,
-        status: row.status,
+        status,
         note: row.note,
         data_dictionary: serde_json::from_str(&row.data_dictionary_json).unwrap_or_default(),
         submitted_by: row.submitted_by,
@@ -298,6 +320,15 @@ async fn deliverable_dto(pool: &SqlitePool, row: DeliverableRow) -> AppResult<De
     .bind(&row.id)
     .fetch_optional(pool)
     .await?;
+    let correction_status = match (&latest, &accepted) {
+        (Some(l), Some(a)) if row.status == "accepted" && l.number > a.number => {
+            Some(match l.status.as_str() {
+                "changes_requested" => "changes_requested",
+                _ => "under_review",
+            })
+        }
+        _ => None,
+    };
     let latest_submission = match latest {
         Some(r) => Some(submission_dto(pool, r).await?),
         None => None,
@@ -339,6 +370,7 @@ async fn deliverable_dto(pool: &SqlitePool, row: DeliverableRow) -> AppResult<De
         created_at: row.created_at,
         latest_submission,
         accepted_submission,
+        correction_status: correction_status.map(str::to_string),
     })
 }
 
@@ -1008,6 +1040,20 @@ async fn list_submissions(
     Ok(Json(ListResponse { items, total }))
 }
 
+/// May the team submit on a deliverable in `status`? `Ok(true)` when the
+/// submission is a corrected version of an accepted deliverable (§5 item 10):
+/// stored as a new submission while the accepted one stays in force.
+fn submission_kind(status: &str) -> AppResult<bool> {
+    match status {
+        "agreed" | "changes_requested" => Ok(false),
+        "accepted" => Ok(true),
+        other => Err(AppError::conflict(
+            "invalid_transition",
+            format!("deliverable is {}", other.replace('_', " ")),
+        )),
+    }
+}
+
 async fn create_submission(
     State(state): State<AppState>,
     actor: Actor,
@@ -1020,12 +1066,9 @@ async fn create_submission(
     if !matches!(access, ProjectAccess::TeamEditor | ProjectAccess::TeamLead) {
         return Err(AppError::forbidden("only team editors may submit results"));
     }
-    if !matches!(row.status.as_str(), "agreed" | "changes_requested") {
-        return Err(AppError::conflict(
-            "invalid_transition",
-            format!("deliverable is {}", row.status.replace('_', " ")),
-        ));
-    }
+    // Fast fail before validating files; re-validated inside the write
+    // transaction below.
+    submission_kind(&row.status)?;
 
     let doc_version_ids = req.document_version_ids.clone().unwrap_or_default();
     let links = req.links.clone().unwrap_or_default();
@@ -1036,7 +1079,7 @@ async fn create_submission(
         errors.check("submission", false, "attach files or links");
     }
     for (i, l) in links.iter().enumerate() {
-        if !deliverables::is_http_url(&l.url) {
+        if !crate::linkcheck::is_http_url(&l.url) {
             errors.check(&format!("links[{i}].url"), false, "must be an http(s) URL");
         }
         errors.check(
@@ -1091,13 +1134,27 @@ async fn create_submission(
     field_errors.finish()?;
 
     let mut tx = db::begin_immediate(&state.pool).await?;
+    // Decide on state re-read INSIDE the write transaction: a concurrent
+    // submission or review may have committed since the checks above.
+    let correction = submission_kind(&load_deliverable_tx(&mut tx, &deliverable_id).await?.status)?;
     let now = now_rfc3339();
-    let number: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(number), 0) + 1 FROM deliverable_submissions WHERE deliverable_id = ?",
+    let (number, latest_status): (i64, Option<String>) = sqlx::query_as(
+        "SELECT COALESCE(MAX(number), 0) + 1,
+                (SELECT status FROM deliverable_submissions
+                 WHERE deliverable_id = ?1 ORDER BY number DESC LIMIT 1)
+         FROM deliverable_submissions WHERE deliverable_id = ?1",
     )
     .bind(&deliverable_id)
     .fetch_one(&mut *tx)
     .await?;
+    // One correction under review at a time (like `submitted` for a first
+    // delivery).
+    if correction && latest_status.as_deref() == Some("received") {
+        return Err(AppError::conflict(
+            "invalid_transition",
+            "a corrected version is already awaiting review",
+        ));
+    }
 
     let submission_id = new_id();
     sqlx::query(
@@ -1154,11 +1211,18 @@ async fn create_submission(
         .await?;
     }
 
-    sqlx::query("UPDATE deliverables SET status = 'submitted' WHERE id = ?")
-        .bind(&deliverable_id)
-        .execute(&mut *tx)
-        .await?;
+    if !correction {
+        sqlx::query("UPDATE deliverables SET status = 'submitted' WHERE id = ?")
+            .bind(&deliverable_id)
+            .execute(&mut *tx)
+            .await?;
+    }
 
+    let what = if correction {
+        "a corrected version of the results"
+    } else {
+        "results"
+    };
     audit::record(
         &mut tx,
         AuditEvent {
@@ -1170,11 +1234,11 @@ async fn create_submission(
             project_id: Some(row.project_id.clone()),
             visibility: "shared".into(),
             summary: format!(
-                "{} submitted results for \"{}\" (#{number})",
+                "{} submitted {what} for \"{}\" (#{number})",
                 actor.name, row.title
             ),
             before: None,
-            after: Some(json!({"number": number})),
+            after: Some(json!({"number": number, "correction": correction})),
             reason: None,
         },
     )
@@ -1184,9 +1248,13 @@ async fn create_submission(
         &mut tx,
         &row.recipient_id,
         "submission.received",
-        "Results submitted",
+        if correction {
+            "Corrected results submitted"
+        } else {
+            "Results submitted"
+        },
         &format!(
-            "{} submitted results for deliverable \"{}\".",
+            "{} submitted {what} for deliverable \"{}\".",
             actor.name, row.title
         ),
         &format!("/app/projects/{}/results", row.project_id),
@@ -1220,6 +1288,41 @@ async fn load_submission_with_project(
     Ok((sub, del))
 }
 
+/// Review state re-read INSIDE the write transaction (BEGIN IMMEDIATE
+/// serialises writers): `(submission status, deliverable status)`. Review
+/// decisions are made on this, never on a pre-transaction read, so a
+/// concurrent accept and request-changes cannot both act on one version.
+async fn review_state_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    submission_id: &str,
+) -> AppResult<(String, String)> {
+    let (submission_status, deliverable_status): (String, String) = sqlx::query_as(
+        "SELECT s.status, d.status FROM deliverable_submissions s
+         JOIN deliverables d ON d.id = s.deliverable_id WHERE s.id = ?",
+    )
+    .bind(submission_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    if !matches!(
+        deliverable_status.as_str(),
+        "submitted" | "changes_requested" | "accepted"
+    ) {
+        return Err(AppError::conflict(
+            "invalid_transition",
+            format!("deliverable is {}", deliverable_status.replace('_', " ")),
+        ));
+    }
+    Ok((submission_status, deliverable_status))
+}
+
+fn submission_status_conflict(status: &str) -> AppError {
+    AppError::conflict(
+        "invalid_transition",
+        format!("submission is {}", status.replace('_', " ")),
+    )
+}
+
 async fn request_changes(
     State(state): State<AppState>,
     actor: Actor,
@@ -1232,30 +1335,36 @@ async fn request_changes(
     errors.finish()?;
 
     let (sub, del) = load_submission_with_project(&state.pool, &submission_id).await?;
-    if sub.status != "received" {
-        return Err(AppError::conflict(
-            "invalid_transition",
-            format!("submission is {}", sub.status.replace('_', " ")),
-        ));
-    }
 
     let mut tx = db::begin_immediate(&state.pool).await?;
+    let (submission_status, deliverable_status) = review_state_tx(&mut tx, &submission_id).await?;
+    if submission_status != "received" {
+        return Err(submission_status_conflict(&submission_status));
+    }
     let now = now_rfc3339();
-    sqlx::query(
+    let updated = sqlx::query(
         "UPDATE deliverable_submissions
          SET status = 'changes_requested', reviewed_by = ?, review_note = ?, reviewed_at = ?
-         WHERE id = ?",
+         WHERE id = ? AND status = 'received'",
     )
     .bind(&actor.user_id)
     .bind(&req.note)
     .bind(&now)
     .bind(&submission_id)
     .execute(&mut *tx)
-    .await?;
-    sqlx::query("UPDATE deliverables SET status = 'changes_requested' WHERE id = ?")
-        .bind(&del.id)
-        .execute(&mut *tx)
-        .await?;
+    .await?
+    .rows_affected();
+    if updated != 1 {
+        return Err(submission_status_conflict(&submission_status));
+    }
+    // Changes requested on a correction leave the earlier accepted version
+    // (and the deliverable's `accepted` status) in force.
+    if deliverable_status != "accepted" {
+        sqlx::query("UPDATE deliverables SET status = 'changes_requested' WHERE id = ?")
+            .bind(&del.id)
+            .execute(&mut *tx)
+            .await?;
+    }
 
     // Shared thread anchored to the deliverable so the team sees the request
     // ("Maria asks: add a description of observation sites").
@@ -1354,29 +1463,81 @@ async fn accept_submission(
 ) -> AppResult<impl IntoResponse> {
     require_coordinator(&actor).await?;
     let (sub, del) = load_submission_with_project(&state.pool, &submission_id).await?;
+    // Fast fail before file IO; re-validated inside the write transaction.
     if !matches!(sub.status.as_str(), "received" | "changes_requested") {
-        return Err(AppError::conflict(
-            "invalid_transition",
-            format!("submission is {}", sub.status.replace('_', " ")),
-        ));
+        return Err(submission_status_conflict(&sub.status));
     }
 
+    // Measurement CSVs: read files BEFORE the write transaction (never hold a
+    // tx across file IO). Invalid rows become warnings and never fail the
+    // acceptance. The deliverable's measurement rows always mirror its
+    // accepted submission, so a corrected table replaces the old rows here.
+    let (rows, warnings) = if del.kind == "dataset" {
+        deliverables::submission_measurements(&state.pool, &state.config.data_dir, &submission_id)
+            .await?
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let reference: Option<String> =
+        sqlx::query_scalar("SELECT reference FROM projects WHERE id = ?")
+            .bind(&del.project_id)
+            .fetch_one(&state.pool)
+            .await?;
+    let source_label = format!(
+        "{} — {} (submission #{})",
+        reference.unwrap_or_else(|| "unreferenced project".into()),
+        del.title,
+        sub.number
+    );
+
     let mut tx = db::begin_immediate(&state.pool).await?;
+    let (submission_status, _) = review_state_tx(&mut tx, &submission_id).await?;
+    if !matches!(submission_status.as_str(), "received" | "changes_requested") {
+        return Err(submission_status_conflict(&submission_status));
+    }
+    // Never let an older version displace a later accepted one.
+    let newer_accepted: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM deliverable_submissions
+                        WHERE deliverable_id = ? AND status = 'accepted' AND number > ?)",
+    )
+    .bind(&del.id)
+    .bind(sub.number)
+    .fetch_one(&mut *tx)
+    .await?;
+    if newer_accepted {
+        return Err(AppError::conflict(
+            "invalid_transition",
+            "a later version of this deliverable is already accepted",
+        ));
+    }
     let now = now_rfc3339();
-    sqlx::query(
+    let updated = sqlx::query(
         "UPDATE deliverable_submissions
          SET status = 'accepted', reviewed_by = ?, reviewed_at = ?
-         WHERE id = ?",
+         WHERE id = ? AND status IN ('received', 'changes_requested')",
     )
     .bind(&actor.user_id)
     .bind(&now)
     .bind(&submission_id)
     .execute(&mut *tx)
-    .await?;
+    .await?
+    .rows_affected();
+    if updated != 1 {
+        return Err(submission_status_conflict(&submission_status));
+    }
     sqlx::query("UPDATE deliverables SET status = 'accepted' WHERE id = ?")
         .bind(&del.id)
         .execute(&mut *tx)
         .await?;
+    deliverables::replace_measurements(
+        &mut tx,
+        &del.project_id,
+        &del.id,
+        &submission_id,
+        &source_label,
+        &rows,
+    )
+    .await?;
 
     // The coordinator's acceptance resolves the team's open ask on this
     // deliverable's shared thread.
@@ -1428,42 +1589,6 @@ async fn accept_submission(
     .await?;
 
     tx.commit().await?;
-
-    // Measurement CSVs: read files OUTSIDE any DB transaction (never hold a
-    // tx across file IO), then insert valid rows. Invalid rows become
-    // warnings and never fail the acceptance.
-    let mut warnings = Vec::new();
-    if del.kind == "dataset" {
-        let (rows, warns) = deliverables::submission_measurements(
-            &state.pool,
-            &state.config.data_dir,
-            &submission_id,
-        )
-        .await?;
-        warnings = warns;
-        if !rows.is_empty() {
-            let reference: Option<String> =
-                sqlx::query_scalar("SELECT reference FROM projects WHERE id = ?")
-                    .bind(&del.project_id)
-                    .fetch_one(&state.pool)
-                    .await?;
-            let source_label = format!(
-                "{} — {} (submission #{})",
-                reference.unwrap_or_else(|| "unreferenced project".into()),
-                del.title,
-                sub.number
-            );
-            deliverables::insert_measurements(
-                &state.pool,
-                &del.project_id,
-                &del.id,
-                &submission_id,
-                &source_label,
-                &rows,
-            )
-            .await?;
-        }
-    }
 
     let dto = load_submission_dto(&state.pool, &submission_id).await?;
     Ok(Json(AcceptSubmissionResponse {
@@ -1682,7 +1807,7 @@ async fn check_link_now(
     deliverables::run_link_check(&state, &link_id).await?;
     let row: ExternalLinkRow = sqlx::query_as(
         "SELECT id, submission_id, url, description, version_label, access_notes,
-                last_checked_at, last_status, available
+                last_checked_at, check_status, check_http_status, check_reason
          FROM external_links WHERE id = ?",
     )
     .bind(&link_id)
@@ -1881,7 +2006,43 @@ struct SampleRow {
     created_at: String,
 }
 
-fn sample_dto(row: SampleRow) -> SampleDto {
+/// Every deliverable of the project, keyed by id — resolves a sample's
+/// related deliverable ids to the results they point at.
+async fn deliverable_refs(
+    pool: &SqlitePool,
+    project_id: &str,
+) -> AppResult<std::collections::HashMap<String, SampleDeliverableDto>> {
+    let rows: Vec<(String, String, String, String)> =
+        sqlx::query_as("SELECT id, title, kind, status FROM deliverables WHERE project_id = ?")
+            .bind(project_id)
+            .fetch_all(pool)
+            .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, title, kind, status)| {
+            (
+                id.clone(),
+                SampleDeliverableDto {
+                    id,
+                    title,
+                    kind,
+                    status,
+                },
+            )
+        })
+        .collect())
+}
+
+fn sample_dto(
+    row: SampleRow,
+    refs: &std::collections::HashMap<String, SampleDeliverableDto>,
+) -> SampleDto {
+    let related_deliverable_ids: Vec<String> =
+        serde_json::from_str(&row.related_deliverable_ids_json).unwrap_or_default();
+    let related_deliverables = related_deliverable_ids
+        .iter()
+        .filter_map(|id| refs.get(id).cloned())
+        .collect();
     SampleDto {
         id: row.id,
         project_id: row.project_id,
@@ -1892,10 +2053,16 @@ fn sample_dto(row: SampleRow) -> SampleDto {
         custodian_org: row.custodian_org,
         storage_location: row.storage_location,
         notes: row.notes,
-        related_deliverable_ids: serde_json::from_str(&row.related_deliverable_ids_json)
-            .unwrap_or_default(),
+        related_deliverable_ids,
+        related_deliverables,
         created_at: row.created_at,
     }
+}
+
+async fn load_sample_dto(pool: &SqlitePool, id: &str) -> AppResult<SampleDto> {
+    let row = load_sample(pool, id).await?;
+    let refs = deliverable_refs(pool, &row.project_id).await?;
+    Ok(sample_dto(row, &refs))
 }
 
 async fn load_sample(pool: &SqlitePool, id: &str) -> AppResult<SampleRow> {
@@ -1947,11 +2114,19 @@ async fn validate_sample_refs(
     errors.finish()
 }
 
+#[derive(serde::Deserialize)]
+struct SampleListQuery {
+    /// Only samples linked to this deliverable (analysis result).
+    deliverable_id: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
 async fn list_samples(
     State(state): State<AppState>,
     actor: Actor,
     Path(project_id): Path<String>,
-    axum::extract::Query(query): axum::extract::Query<ListQuery>,
+    axum::extract::Query(query): axum::extract::Query<SampleListQuery>,
 ) -> AppResult<Json<ListResponse<SampleDto>>> {
     let access = authz::project_access(&state.pool, &actor, &project_id).await?;
     if access == ProjectAccess::None {
@@ -1959,23 +2134,30 @@ async fn list_samples(
             "you do not have access to this project",
         ));
     }
-    let limit = query.limit();
-    let offset = query.offset();
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM samples WHERE project_id = ?")
+    let paging = ListQuery {
+        limit: query.limit,
+        offset: query.offset,
+    };
+    const FILTER: &str = "project_id = ?1 AND (?2 IS NULL OR EXISTS (
+        SELECT 1 FROM json_each(related_deliverable_ids_json) WHERE json_each.value = ?2))";
+    let total: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM samples WHERE {FILTER}"))
         .bind(&project_id)
+        .bind(&query.deliverable_id)
         .fetch_one(&state.pool)
         .await?;
-    let rows: Vec<SampleRow> = sqlx::query_as(
+    let rows: Vec<SampleRow> = sqlx::query_as(&format!(
         "SELECT id, project_id, code, site_id, collected_on, material, custodian_org,
                 storage_location, notes, related_deliverable_ids_json, created_at
-         FROM samples WHERE project_id = ? ORDER BY code LIMIT ? OFFSET ?",
-    )
+         FROM samples WHERE {FILTER} ORDER BY code LIMIT ?3 OFFSET ?4"
+    ))
     .bind(&project_id)
-    .bind(limit)
-    .bind(offset)
+    .bind(&query.deliverable_id)
+    .bind(paging.limit())
+    .bind(paging.offset())
     .fetch_all(&state.pool)
     .await?;
-    let items = rows.into_iter().map(sample_dto).collect();
+    let refs = deliverable_refs(&state.pool, &project_id).await?;
+    let items = rows.into_iter().map(|r| sample_dto(r, &refs)).collect();
     Ok(Json(ListResponse { items, total }))
 }
 
@@ -2052,7 +2234,7 @@ async fn create_sample(
     tx.commit().await?;
     Ok((
         StatusCode::CREATED,
-        Json(sample_dto(load_sample(&state.pool, &id).await?)),
+        Json(load_sample_dto(&state.pool, &id).await?),
     ))
 }
 
@@ -2145,9 +2327,7 @@ async fn patch_sample(
     .await?;
 
     tx.commit().await?;
-    Ok(Json(sample_dto(
-        load_sample(&state.pool, &sample_id).await?,
-    )))
+    Ok(Json(load_sample_dto(&state.pool, &sample_id).await?))
 }
 
 async fn delete_sample(

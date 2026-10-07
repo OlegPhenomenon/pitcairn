@@ -7,8 +7,10 @@ expert review, a formal decision with conditions, base and boat bookings,
 invoicing, agreed deliverables, receipt of results, and finally a public
 catalog of what was published. This is a **demo**: all people, organisations
 and amounts are fictional, and external integrations (mail, bank, card
-payments, link checker, antivirus, AI assistant) are mocked behind
-interfaces. Everything else is real — persisted, enforced and audited.
+payments, antivirus, AI assistant) are mocked behind interfaces; the
+external-link checker makes real HTTP checks (with a deterministic mock for
+the demo's reserved example hosts). Everything else is real — persisted,
+enforced and audited.
 
 **Live demo:** <https://pitcairn.shelfcompass.com>
 
@@ -53,13 +55,17 @@ documents (research notes with verbatim extracts live in
 **Coordinator (Pitcairn case officer)**
 
 - Role dashboard: new applications, waiting-for-applicant, with-experts,
-  arrivals, results to check, overdue results.
+  arrivals, results to check, overdue results (including data links that
+  went missing or unreachable, with the reason and last check time).
 - Open applications for screening; create action items addressed to the team
   anchored to exactly what is missing; assign experts.
 - Agree deliverables before fieldwork; check submitted results for *receipt*
   (not scientific truth), return items for correction or accept them.
 - Choose what is published: metadata only or metadata plus selected files,
   with optional embargo; close projects; export a project ZIP.
+- Settings → **Templates**: edit application fields, required documents and
+  hints, publish a new version (no developer needed). Settings → **Users**:
+  find people and grant/revoke the operational roles `expert` and `provider`.
 
 **Expert**
 
@@ -71,13 +77,16 @@ documents (research notes with verbatim extracts live in
 - Drafts and issues permits, refusals and amendments with explicit
   conditions, permitted activities, restrictions and validity dates;
   printable decision document; superseding a decision keeps both on record.
-- Only a decision maker can grant the `decision_maker` role (or the CLI, for
-  the first one).
+- Settings → **Users**: lists and searches users and grants or revokes the
+  `decision_maker` role — only a decision maker can (or the CLI, for the
+  first one); nothing else.
 
 **Base manager**
 
 - Resource calendar; confirms or declines bookings for rooms, lab, equipment
   and services with per-day capacity conflict detection.
+- Settings → **Resources & tariffs**: maintains the resource catalogue and
+  its prices.
 
 **Boat provider (external)**
 
@@ -89,13 +98,18 @@ documents (research notes with verbatim extracts live in
 - Creates invoices from bookings (tariff prices snapshotted per line), issues
   and cancels them, records payments and refunds, and verifies bank-transfer
   notifications (HMAC-signed, idempotent on the external reference).
+- Settings → **Resources & tariffs**: adds new prices from an effective date
+  (append-only; issued invoices keep their prices).
 
 **Admin**
 
-- Users and roles (except `decision_maker`), application templates
-  (draft → publish), resources and tariffs, settings (organisation name,
-  reference prefix, mail, public catalog), delivery jobs with retry, audit
-  log, and imports (legacy CSV, project archives). Gets no decision rights.
+- Accounts (create, edit, disable) and every role except `decision_maker`
+  (403 — the technical admin never gets permit-granting rights), application
+  templates, resources and tariffs, settings (organisation name, reference
+  prefix, mail, public catalog), delivery jobs with retry, audit log, and
+  imports (legacy CSV, project archives). Gets no decision rights.
+
+Nobody can grant a role to themselves.
 
 **Public catalog visitor (no login)**
 
@@ -191,7 +205,8 @@ copy.
 | `PITCAIRN_SESSION_SECRET` | random per start | Cookie signing key — set it so sessions survive restarts |
 | `PITCAIRN_BANK_WEBHOOK_SECRET` | random per start | HMAC secret for bank notifications |
 | `PITCAIRN_MAX_UPLOAD_BYTES` | `2147483648` (2 GiB) | Max size per uploaded file |
-| `PITCAIRN_LINK_CHECK_MODE` | `mock` | Only `mock` is implemented: hosts ending `.invalid` or paths containing `/missing` are unavailable, everything else is available |
+| `PITCAIRN_LINK_CHECK_MODE` | `live` | `live`: real HTTP check of submitted data links (reserved demo hosts stay mocked); `mock`: deterministic mock for every URL — see below |
+| `PITCAIRN_LINK_CHECK_ALLOW_PRIVATE` | `false` | Test only: let live link checks reach loopback/private addresses |
 | `PITCAIRN_AI_MODE` | `mock` | `mock` or `off` |
 | `PITCAIRN_SECURE_COOKIES` | `false` | Set `true` when serving over TLS |
 
@@ -200,6 +215,33 @@ The CLI (`pitcairn --help`): `serve`, `migrate`, `seed-demo [--reset]`,
 `backup --out DIR`, `restore --from DIR [--force]`,
 `export-project REF --out FILE.zip`, `import-project FILE.zip`,
 `export-types`.
+
+### External link checks
+
+When results stay in a university repository the team submits the address,
+a description and a version label. Each link is checked when it is
+submitted, once a day afterwards, and on demand (coordinator → *Check now*
+on the deliverable). Every check stores the outcome, the HTTP status code,
+a short reason and the check time:
+
+| Outcome | When | Coordinator alert |
+|---|---|---|
+| Available | 2xx (redirects followed) | — |
+| Not found (`missing`) | HTTP 404 / 410 — the file was deleted or moved | dashboard + notification |
+| Unreachable | DNS failure, timeout, refused connection, TLS error, 5xx, too many redirects | dashboard + notification |
+| Login required | HTTP 401 / 403 / 407 or a redirect to a login page | none — closed access may be agreed |
+
+The coordinator is notified once when a link turns missing/unreachable (and
+again only after it recovered and failed anew). In `live` mode the checker
+sends `HEAD` (falling back to a one-byte ranged `GET` on 405/501) with 10 s
+timeouts and at most 5 redirects. SSRF guard: only `http(s)`; every hop's
+host is resolved and refused if it points at a loopback, private,
+link-local, unique-local, multicast or unspecified address; the connection
+is pinned to the vetted address; proxies are not used. Reserved demo hosts
+(`*.invalid`, `*.example`, `*.test`, `example.org/.com/.net`) keep the
+deterministic mock in both modes: `.invalid` hosts are unreachable, paths
+containing `/missing` are not found, paths containing `/restricted` need a
+login, everything else is available.
 
 ## Tech stack & layout
 
@@ -254,7 +296,9 @@ style gates.
 - No secrets in the repo (`.env.example` contains placeholders; real env
   files and `.kamal/secrets` are git-ignored).
 - External integrations are mocked behind interfaces: mail transport, bank
-  notifications, card payments, link checker, antivirus scan, AI assistant.
+  notifications, card payments, antivirus scan, AI assistant. The only
+  outbound HTTP is the external-link check, which refuses private and local
+  network addresses (SSRF guard).
   The AI assistant only suggests — it never decides, grants access or
   calculates.
 

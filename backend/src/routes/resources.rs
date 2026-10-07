@@ -38,6 +38,12 @@ const RESOURCE_KINDS: &[&str] = &["room", "lab", "equipment", "boat", "service"]
 /// hourly tariffs are never used and not accepted.
 const TARIFF_UNITS: &[&str] = &["per_night", "per_day", "per_item"];
 
+/// Resource catalogue editors (§7: Pitcairn staff configure it via the UI):
+/// the technical admin and the base manager.
+const RESOURCE_EDITORS: &[&str] = &["admin", "base_manager"];
+/// Price editors: resource editors plus finance. Tariffs stay append-only.
+const TARIFF_EDITORS: &[&str] = &["admin", "base_manager", "finance"];
+
 #[derive(FromRow)]
 #[allow(dead_code)]
 struct ResourceRow {
@@ -104,7 +110,7 @@ async fn create_resource(
     actor: Actor,
     Json(req): Json<CreateResourceRequest>,
 ) -> AppResult<impl IntoResponse> {
-    authz::require_role(&actor, &["admin"])?;
+    authz::require_role(&actor, RESOURCE_EDITORS)?;
 
     let mut errors = FieldErrors::new();
     errors.check(
@@ -183,7 +189,7 @@ async fn patch_resource(
     Path(id): Path<String>,
     Json(req): Json<PatchResourceRequest>,
 ) -> AppResult<Json<ResourceDto>> {
-    authz::require_role(&actor, &["admin"])?;
+    authz::require_role(&actor, RESOURCE_EDITORS)?;
 
     let before: ResourceRow = sqlx::query_as(&format!("{RESOURCE_SELECT} WHERE r.id = ?"))
         .bind(&id)
@@ -361,7 +367,7 @@ async fn create_tariff(
     Path(resource_id): Path<String>,
     Json(req): Json<CreateTariffRequest>,
 ) -> AppResult<impl IntoResponse> {
-    authz::require_role(&actor, &["admin"])?;
+    authz::require_role(&actor, TARIFF_EDITORS)?;
     ensure_resource_exists(&state.pool, &resource_id).await?;
 
     let mut errors = FieldErrors::new();

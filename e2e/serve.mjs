@@ -8,7 +8,9 @@ try { unlinkSync(new URL('.run-data', import.meta.url)); } catch {}
 prepare();
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
 const dataDir = readFileSync(join(root, 'e2e', '.run-data'), 'utf8');
-const env = { ...process.env, PITCAIRN_DATA_DIR: dataDir, PITCAIRN_DEMO_MODE: 'true', PITCAIRN_BIND: '127.0.0.1:18080', PITCAIRN_BASE_URL: 'http://127.0.0.1:18080', PITCAIRN_STATIC_DIR: join(root, 'frontend', 'dist') };
+// LINK_CHECK_ALLOW_PRIVATE lets the real link checker reach the stand-in
+// repository the tests run on 127.0.0.1 (never set in production).
+const env = { ...process.env, PITCAIRN_DATA_DIR: dataDir, PITCAIRN_DEMO_MODE: 'true', PITCAIRN_BIND: '127.0.0.1:18080', PITCAIRN_BASE_URL: 'http://127.0.0.1:18080', PITCAIRN_STATIC_DIR: join(root, 'frontend', 'dist'), PITCAIRN_LINK_CHECK_MODE: 'live', PITCAIRN_LINK_CHECK_ALLOW_PRIVATE: 'true' };
 const localTarget = '/Users/oleghasjanov/projects/pitcairn/backend/target';
 if (process.env.CARGO_TARGET_DIR || existsSync(localTarget)) env.CARGO_TARGET_DIR = process.env.CARGO_TARGET_DIR ?? localTarget;
 const server = spawn('cargo', ['run', '--manifest-path', join(root, 'backend', 'Cargo.toml'), '--', 'serve'], { env, stdio: 'inherit' });

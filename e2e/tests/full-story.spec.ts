@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import { loginSeed, measurementCsv, switchPersona, uploadFile } from '../helpers/ui.js';
 
@@ -40,17 +41,23 @@ async function openResult(page: Page, name: string) {
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
 }
 
-async function submitResult(page: Page, filename: string, content: string, csv = false) {
-  await page.getByLabel('File title').fill(csv ? 'Survey measurements' : 'Field report');
+async function submitResult(page: Page, filename: string, content: string, csv = false, fileTitle = csv ? 'Survey measurements' : 'Field report', links: { url: string; description: string }[] = []) {
+  await page.getByLabel('File title').fill(fileTitle);
   await uploadFile(page, filename, content, csv ? 'text/csv' : 'text/plain');
-  await expect(page.getByText(csv ? 'Survey measurements' : 'Field report', { exact: false }).last()).toBeVisible();
-  await page.getByRole('checkbox', { name: new RegExp(csv ? 'Survey measurements' : 'Field report') }).check();
+  await expect(page.getByText(fileTitle, { exact: false }).last()).toBeVisible();
+  await page.getByRole('checkbox', { name: new RegExp(`^${fileTitle} ·`) }).check();
   if (csv) {
     const dictionary = page.getByRole('heading', { name: 'Data dictionary' }).locator('..');
     await dictionary.getByLabel('Column').fill('value');
     await dictionary.getByLabel('Description').fill('Sea surface temperature');
     await dictionary.getByLabel('Unit').fill('C');
     await dictionary.getByLabel('Method').fill('Fictional sensor');
+  }
+  for (const [i, link] of links.entries()) {
+    if (i > 0) await page.getByRole('button', { name: 'Add link' }).click();
+    await page.getByLabel('Url', { exact: true }).nth(i).fill(link.url);
+    await page.getByLabel('Description', { exact: true }).nth(i).fill(link.description);
+    await page.getByLabel('Version Label', { exact: true }).nth(i).fill('v1');
   }
   await page.getByRole('button', { name: 'Submit results' }).click();
   await expect(page.getByText('Results submitted', { exact: true })).toBeVisible();
@@ -65,6 +72,14 @@ test('new team completes the application, permit, booking, payment, and publicat
   const staffContext = await browser.newContext();
   const staff = await staffContext.newPage();
   const anonymous = await browser.newContext();
+  // A stand-in university repository on a real socket: the link checker
+  // fetches it over HTTP; deleting a file makes it answer 404.
+  const repository = new Map([['/repo/field-photos.zip', 200], ['/repo/closed-archive.zip', 401]]);
+  const repositoryServer = createServer((req, res) => {
+    res.statusCode = repository.get(req.url ?? '') ?? 404;
+    res.end();
+  });
+  await new Promise<void>(resolve => repositoryServer.listen(18091, '127.0.0.1', resolve));
   try {
     await researcher.goto('/register');
     await researcher.getByLabel('Full name').fill('Dr Mira Solis');
@@ -181,6 +196,7 @@ test('new team completes the application, permit, booking, payment, and publicat
     await switchPersona(staff, 'helen');
     await visit(staff, projectId, 'decisions');
     await staff.getByLabel('Application revision').selectOption({ label: 'Revision 2' });
+    await staff.getByLabel('Permit name').fill('Shore plankton observation');
     await staff.getByLabel('Basis').fill('Expert advice and updated safety plan.');
     await staff.getByLabel('Valid from').fill(date(29));
     await staff.getByLabel('Valid to').fill(date(40));
@@ -190,7 +206,7 @@ test('new team completes the application, permit, booking, payment, and publicat
     await expect(staff.getByText('Decision draft saved')).toBeVisible();
     await staff.getByRole('button', { name: 'Issue decision' }).first().click();
     await staff.getByRole('dialog', { name: 'Issue decision' }).getByRole('button', { name: 'Issue decision' }).click();
-    await expect(staff.getByRole('heading', { name: 'Current decision: Research permit' })).toBeVisible();
+    await expect(staff.getByRole('heading', { name: 'Permit: Shore plankton observation' })).toBeVisible();
     await visit(researcher, projectId);
     await expect(researcher.getByText(`Conditions: ${condition}`)).toBeVisible();
 
@@ -241,12 +257,102 @@ test('new team completes the application, permit, booking, payment, and publicat
       await expect(staff.getByText('Deliverable updated')).toBeVisible();
       await staff.getByRole('button', { name: 'Close details' }).click();
     }
+
+    // Spec §5 item 5 and §6 "Проверка изменений": a second, independent permit;
+    // extending one permit leaves the other untouched; a reschedule after the
+    // trip, permit and deadlines are agreed shows its consequences and does not
+    // silently change any decision; revoking one permit keeps the other.
+    await switchPersona(staff, 'helen');
+    await visit(staff, projectId, 'decisions');
+    await staff.getByLabel('Permit name').fill('Plankton net tows');
+    await staff.getByLabel('Application revision').selectOption({ label: 'Revision 2' });
+    await staff.getByLabel('Basis').fill('Separate activity: small plankton net tows from the jetty.');
+    await staff.getByLabel('Valid from').fill(date(29));
+    await staff.getByLabel('Valid to').fill(date(40));
+    await staff.getByLabel('Permitted activities (one per line)').fill('Plankton net tows from the jetty');
+    await staff.getByRole('button', { name: 'Save draft' }).click();
+    await expect(staff.getByText('Decision draft saved')).toBeVisible();
+    await staff.getByRole('button', { name: 'Issue decision' }).first().click();
+    await staff.getByRole('dialog', { name: 'Issue decision' }).getByRole('button', { name: 'Issue decision' }).click();
+    await expect(staff.getByRole('heading', { name: 'Permits in force (2)' })).toBeVisible();
+    const permitA = staff.getByRole('region', { name: 'Permit Shore plankton observation' });
+    const permitB = staff.getByRole('region', { name: 'Permit Plankton net tows' });
+    const permitBTerms = await permitB.textContent();
+
+    await visit(researcher, projectId, 'changes');
+    await researcher.getByLabel('Type').selectOption('extend_permit');
+    await selectMatching(researcher.getByLabel('Permit to extend'), /Shore plankton observation/);
+    await researcher.getByLabel('Requested end date').fill(date(100));
+    await researcher.getByLabel('Describe the change').fill('Extend the shore observation permit to cover a second visit.');
+    await researcher.getByRole('button', { name: 'Send change request' }).click();
+    await expect(researcher.getByText('Change requested')).toBeVisible();
+    await switchPersona(staff, 'maria');
+    await visit(staff, projectId, 'changes');
+    const extension = staff.getByRole('listitem').filter({ hasText: 'extend permit' });
+    await expect(extension.getByText(/Permit: Shore plankton observation/)).toBeVisible();
+    await expect(extension.getByText(/Permit: Plankton net tows/)).toHaveCount(0);
+
+    await switchPersona(staff, 'helen');
+    await visit(staff, projectId, 'decisions');
+    await permitA.getByRole('button', { name: 'Extend this permit' }).click();
+    await staff.getByLabel('Basis').fill('Second visit approved on the same conditions.');
+    await staff.getByLabel('Valid to').fill(date(100));
+    await staff.getByRole('button', { name: 'Save draft' }).click();
+    await expect(staff.getByText('Decision draft saved')).toBeVisible();
+    await staff.getByRole('button', { name: 'Issue decision' }).first().click();
+    await staff.getByRole('dialog', { name: 'Issue decision' }).getByRole('button', { name: 'Issue decision' }).click();
+    await expect(permitA.getByText('Latest: Extension')).toBeVisible();
+    await expect(staff.getByRole('heading', { name: 'Permits in force (2)' })).toBeVisible();
+    expect(await permitB.textContent()).toBe(permitBTerms);
+    await expect(staff.getByText(/Replaces Research permit “Shore plankton observation”/)).toBeVisible();
+
+    await switchPersona(staff, 'maria');
+    await visit(staff, projectId, 'changes');
+    await selectMatching(extension.getByLabel('Issued decision implementing this change'), /Extension · Shore plankton observation/);
+    await extension.getByRole('button', { name: 'Approve' }).click();
+    await expect(staff.getByText('Change approved')).toBeVisible();
+
+    await visit(researcher, projectId, 'changes');
+    await researcher.getByLabel('Type').selectOption('reschedule_trip');
+    await selectMatching(researcher.getByLabel('Trip'), /Bounty Bay field visit/);
+    await researcher.getByLabel('New arrival').fill(date(88));
+    await researcher.getByLabel('New departure').fill(date(95));
+    await researcher.getByLabel('Describe the change').fill('The supply ship moved; we need to arrive later.');
+    await researcher.getByRole('button', { name: 'Send change request' }).click();
+    await expect(researcher.getByText('Change requested')).toBeVisible();
+    await visit(staff, projectId, 'changes');
+    const reschedule = staff.getByRole('listitem').filter({ hasText: 'reschedule trip' });
+    await expect(reschedule.getByText(/Booking: MSB twin bedroom · Will be re-requested/)).toBeVisible();
+    await expect(reschedule.getByText(/Deliverable: Survey dataset/)).toBeVisible();
+    await expect(reschedule.getByText(/Permit: Plankton net tows/)).toBeVisible();
+    await expect(reschedule.getByText(/Permit: Shore plankton observation/)).toHaveCount(0);
+    await reschedule.getByRole('button', { name: 'Approve' }).click();
+    await expect(staff.getByText('Change approved')).toBeVisible();
+    await visit(staff, projectId, 'decisions');
+    await expect(staff.getByRole('heading', { name: 'Permits in force (2)' })).toBeVisible();
+    expect(await permitB.textContent()).toBe(permitBTerms);
+
+    await switchPersona(staff, 'helen');
+    await visit(staff, projectId, 'decisions');
+    await permitB.getByRole('button', { name: 'Revoke this permit' }).click();
+    await staff.getByLabel('Basis').fill('Net tows are no longer needed.');
+    await staff.getByRole('button', { name: 'Save draft' }).click();
+    await expect(staff.getByText('Decision draft saved')).toBeVisible();
+    await staff.getByRole('button', { name: 'Issue decision' }).first().click();
+    await staff.getByRole('dialog', { name: 'Issue decision' }).getByRole('button', { name: 'Issue decision' }).click();
+    await expect(staff.getByRole('heading', { name: 'Permits in force (1)' })).toBeVisible();
+    await expect(permitB.getByText('Revoked', { exact: true })).toBeVisible();
+    await expect(permitA.getByText('In force', { exact: true })).toBeVisible();
+    await switchPersona(staff, 'maria');
     await visit(researcher, projectId, 'results');
     await openResult(researcher, 'Survey dataset');
     await submitResult(researcher, 'measurements.csv', measurementCsv, true);
     await researcher.getByRole('button', { name: 'Close details' }).click();
     await openResult(researcher, 'Field report');
-    await submitResult(researcher, 'field-report.txt', 'Fictional field report: plankton observations at Bounty Bay.');
+    await submitResult(researcher, 'field-report.txt', 'Fictional field report: plankton observations at Bounty Bay.', false, undefined, [
+      { url: 'http://127.0.0.1:18091/repo/field-photos.zip', description: 'Field photo archive' },
+      { url: 'http://127.0.0.1:18091/repo/closed-archive.zip', description: 'Raw sensor archive' },
+    ]);
     await researcher.getByRole('button', { name: 'Close details' }).click();
     await visit(staff, projectId, 'results');
     await openResult(staff, 'Survey dataset');
@@ -258,15 +364,48 @@ test('new team completes the application, permit, booking, payment, and publicat
     await openResult(staff, 'Field report');
     await staff.getByRole('button', { name: 'Accept receipt' }).click();
     await staff.getByRole('dialog', { name: 'Accept receipt' }).getByRole('button', { name: 'Confirm' }).click();
+
+    // Spec §5 item 11: Maria checks the repository links for real. The same
+    // URL turns from available to not found once the file is deleted; a
+    // login-protected archive is reported as such, not as lost data.
+    const photos = staff.locator('div').filter({ has: staff.getByRole('link', { name: 'Field photo archive' }) }).last();
+    const closed = staff.locator('div').filter({ has: staff.getByRole('link', { name: 'Raw sensor archive' }) }).last();
+    await photos.getByRole('button', { name: 'Check now' }).click();
+    await expect(photos.getByText('Available', { exact: true })).toBeVisible();
+    await expect(photos.getByText(/last checked/)).toBeVisible();
+    await closed.getByRole('button', { name: 'Check now' }).click();
+    await expect(closed.getByText('Login required', { exact: true })).toBeVisible();
+    await expect(closed.getByText(/may be agreed closed access/)).toBeVisible();
+    repository.delete('/repo/field-photos.zip');
+    await photos.getByRole('button', { name: 'Check now' }).click();
+    await expect(photos.getByText('Not found', { exact: true })).toBeVisible();
+    await expect(photos.getByText(/HTTP 404.*last checked/)).toBeVisible();
     await staff.getByRole('button', { name: 'Close details' }).click();
     await visit(researcher, projectId, 'results');
     await openResult(researcher, 'Survey dataset');
-    await submitResult(researcher, 'corrected-measurements.csv', measurementCsv + 'Bounty Bay,2026-11-13,temperature,22.5,C\n', true);
+    await submitResult(researcher, 'corrected-measurements.csv', measurementCsv + 'Bounty Bay,2026-11-13,temperature,22.5,C\n', true, 'Corrected survey measurements');
     await visit(staff, projectId, 'results');
     await openResult(staff, 'Survey dataset');
     await staff.getByRole('button', { name: 'Accept receipt' }).click();
     await staff.getByRole('dialog', { name: 'Accept receipt' }).getByRole('button', { name: 'Confirm' }).click();
     await staff.getByRole('button', { name: 'Close details' }).click();
+
+    // Spec §5 item 14: another staff member finds the new study by
+    // organisation and year, and the accepted (corrected) table drives the chart.
+    await switchPersona(staff, 'helen');
+    await staff.goto('/app/search');
+    await staff.getByLabel('Organisation').fill('Southern Ocean Field Institute');
+    await staff.getByLabel('Year').fill(date(30).slice(0, 4));
+    await staff.getByRole('button', { name: 'Search', exact: true }).click();
+    await expect(staff.getByText(title).first()).toBeVisible();
+    await staff.goto('/app/reports');
+    await staff.getByLabel('Variable').selectOption('temperature');
+    await expect(staff.getByRole('heading', { name: 'temperature (C)' })).toBeVisible();
+    const measured = staff.getByRole('row').filter({ hasText: `${projectReference} — Survey dataset` });
+    await expect(measured).toHaveCount(2);
+    await expect(measured.filter({ hasText: '22.5 C' })).toContainText('(submission #2)');
+    await switchPersona(staff, 'maria');
+    await visit(staff, projectId, 'results');
     await openResult(staff, 'Field report');
     await staff.getByRole('button', { name: 'Set publication' }).click();
     const publishing = staff.getByRole('dialog', { name: 'Publish results' });
@@ -290,5 +429,6 @@ test('new team completes the application, permit, booking, payment, and publicat
     await colleagueContext.close();
     await staffContext.close();
     await anonymous.close();
+    repositoryServer.close();
   }
 });

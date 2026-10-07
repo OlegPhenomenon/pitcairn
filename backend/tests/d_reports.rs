@@ -133,3 +133,138 @@ async fn reports_are_staff_only() {
         assert_eq!(anna.get(path).await.status(), 403, "{path}");
     }
 }
+
+async fn nitrate_report(maria: &common::Client) -> MeasurementsReportResponse {
+    let resp = maria
+        .get("/api/v1/reports/measurements?variable_key=nitrate")
+        .await;
+    assert_eq!(resp.status(), 200);
+    maria.json(resp).await
+}
+
+/// §5 item 14 / §6: a measurement table submitted and accepted through the
+/// API (not seeded) reaches the reports page with its unit and source; an
+/// accepted correction replaces the old values there.
+#[tokio::test]
+async fn newly_accepted_measurement_table_reaches_reports() {
+    use common::c::*;
+    let app = spawn_app(true).await;
+    let anna = persona(&app, "anna").await;
+    let maria = persona(&app, "maria").await;
+    let project = seeded_project(&app).await;
+    sqlx::query("UPDATE projects SET reference = 'PIT-2030-042', status = 'approved' WHERE id = ?")
+        .bind(&project)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    let anna_id = user_id(&app, "anna@demo.pitcairn.invalid").await;
+    let maria_id = user_id(&app, "maria@demo.pitcairn.invalid").await;
+    let d = agreed_deliverable(&anna, &maria, &project, "dataset", &anna_id, &maria_id).await;
+
+    // Nothing about nitrate exists before the submission.
+    assert!(nitrate_report(&maria).await.series.is_empty());
+
+    let csv1: &[u8] = b"site,date,variable,value,unit\n\
+                        Bounty Bay,2030-03-01,nitrate,1.25,umol/L\n\
+                        Tedside,2030-03-02,nitrate,0.75,umol/L\n";
+    let f1 = upload_clean_file(&anna, &app, csv1, "text/csv").await;
+    let v1 = create_document(&anna, &project, "Nutrients", "result", &f1).await;
+    let s1 = submit(
+        &anna,
+        &d.id,
+        serde_json::json!({"document_version_ids": [v1]}),
+    )
+    .await;
+
+    // Submitted but not accepted → not in reports yet.
+    assert!(nitrate_report(&maria).await.series.is_empty());
+    let resp = maria
+        .post(&format!("/api/v1/submissions/{}/accept", s1.id))
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let resp = maria.get("/api/v1/reports/measurements/variables").await;
+    let vars: ListResponse<MeasurementVariableDto> = maria.json(resp).await;
+    let nitrate = vars
+        .items
+        .iter()
+        .find(|v| v.variable_key == "nitrate")
+        .expect("variable listed for the report picker");
+    assert_eq!(
+        (nitrate.unit.as_str(), nitrate.count, nitrate.projects),
+        ("umol/L", 2, 1)
+    );
+
+    let report = nitrate_report(&maria).await;
+    assert_eq!(report.series.len(), 1);
+    let series = &report.series[0];
+    assert_eq!(series.unit, "umol/L");
+    let points: Vec<(&str, &str, f64)> = series
+        .points
+        .iter()
+        .map(|p| (p.site.as_str(), p.observed_on.as_str(), p.value))
+        .collect();
+    assert_eq!(
+        points,
+        vec![
+            ("Bounty Bay", "2030-03-01", 1.25),
+            ("Tedside", "2030-03-02", 0.75)
+        ]
+    );
+    for p in &series.points {
+        assert_eq!(p.unit, "umol/L");
+        assert_eq!(p.project_id, project);
+        assert_eq!(p.project_reference.as_deref(), Some("PIT-2030-042"));
+        assert_eq!(
+            p.source_label,
+            "PIT-2030-042 — Final report (submission #1)"
+        );
+    }
+
+    // Corrected table: the old values stay in the report until the
+    // correction is accepted, then only the new values are shown.
+    let csv2: &[u8] = b"site,date,variable,value,unit\n\
+                        Bounty Bay,2030-03-01,nitrate,1.5,umol/L\n\
+                        Tedside,2030-03-02,nitrate,0.5,umol/L\n";
+    let f2 = upload_clean_file(&anna, &app, csv2, "text/csv").await;
+    let v2 = create_document(&anna, &project, "Nutrients corrected", "result", &f2).await;
+    let s2 = submit(
+        &anna,
+        &d.id,
+        serde_json::json!({"document_version_ids": [v2]}),
+    )
+    .await;
+    let values: Vec<f64> = nitrate_report(&maria).await.series[0]
+        .points
+        .iter()
+        .map(|p| p.value)
+        .collect();
+    assert_eq!(values, vec![1.25, 0.75]);
+
+    let resp = maria
+        .post(&format!("/api/v1/submissions/{}/accept", s2.id))
+        .await;
+    assert_eq!(resp.status(), 200);
+    let report = nitrate_report(&maria).await;
+    assert_eq!(report.series.len(), 1);
+    let points: Vec<(&str, f64, &str)> = report.series[0]
+        .points
+        .iter()
+        .map(|p| (p.site.as_str(), p.value, p.source_label.as_str()))
+        .collect();
+    assert_eq!(
+        points,
+        vec![
+            (
+                "Bounty Bay",
+                1.5,
+                "PIT-2030-042 — Final report (submission #2)"
+            ),
+            (
+                "Tedside",
+                0.5,
+                "PIT-2030-042 — Final report (submission #2)"
+            ),
+        ]
+    );
+}

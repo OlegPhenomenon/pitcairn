@@ -42,28 +42,30 @@ const ROLES: &[&str] = &[
     "provider",
 ];
 
+/// Who may list/search users: the technical admin, the decision maker (to
+/// grant `decision_maker`), the coordinator (to grant operational roles) and
+/// the base manager (to pick a resource's provider).
+const USER_LISTERS: &[&str] = &["admin", "decision_maker", "coordinator", "base_manager"];
+
+/// Anyone who may grant or revoke at least one role (see `role_granters`).
+const ROLE_MANAGERS: &[&str] = &["admin", "decision_maker", "coordinator"];
+
 pub fn router(state: AppState) -> Router<AppState> {
     let admin_only = Router::new()
         .route("/admin/settings", get(get_settings).put(put_settings))
-        .route("/admin/users", get(list_users).post(create_user))
         .route("/admin/users/{id}", patch(patch_user))
         .route("/admin/jobs", get(list_jobs))
         .route("/admin/jobs/{id}/retry", post(retry_job))
         .route("/admin/audit", get(list_audit))
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            require_admin,
-        ));
+        .layer(axum::middleware::from_fn_with_state(state, require_admin));
 
-    let role_routes = Router::new()
+    // Authorization per handler: these are shared by several staff roles.
+    let user_routes = Router::new()
+        .route("/admin/users", get(list_users).post(create_user))
         .route("/admin/users/{id}/roles", post(grant_role))
-        .route("/admin/users/{id}/roles/{role}", delete(revoke_role))
-        .layer(axum::middleware::from_fn_with_state(
-            state,
-            require_admin_or_decision_maker,
-        ));
+        .route("/admin/users/{id}/roles/{role}", delete(revoke_role));
 
-    admin_only.merge(role_routes)
+    admin_only.merge(user_routes)
 }
 
 async fn require_admin(
@@ -73,21 +75,6 @@ async fn require_admin(
     next: Next,
 ) -> AppResult<Response> {
     authz::require_role(&actor, &["admin"])?;
-    Ok(next.run(req).await)
-}
-
-async fn require_admin_or_decision_maker(
-    State(_state): State<AppState>,
-    actor: Actor,
-    req: Request<Body>,
-    next: Next,
-) -> AppResult<Response> {
-    if !actor.has_role("admin") && !actor.has_role("decision_maker") {
-        return Err(AppError::Forbidden {
-            code: "forbidden".into(),
-            message: "requires role: admin or decision_maker".into(),
-        });
-    }
     Ok(next.run(req).await)
 }
 
@@ -182,9 +169,10 @@ struct AdminUsersQuery {
 
 async fn list_users(
     State(state): State<AppState>,
-    _actor: Actor,
+    actor: Actor,
     Query(query): Query<AdminUsersQuery>,
 ) -> AppResult<Json<ListResponse<UserDto>>> {
+    authz::require_role(&actor, USER_LISTERS)?;
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
     let offset = query.offset.unwrap_or(0).max(0);
 
@@ -231,9 +219,10 @@ async fn list_users(
 
 async fn create_user(
     State(state): State<AppState>,
-    _actor: Actor,
+    actor: Actor,
     Json(req): Json<AdminCreateUserRequest>,
 ) -> AppResult<impl IntoResponse> {
+    authz::require_role(&actor, &["admin"])?;
     let mut errors = FieldErrors::new();
     errors.check(
         "email",
@@ -361,24 +350,34 @@ async fn patch_user(
     Ok(Json(load_user_dto(&state.pool, &user_id).await?))
 }
 
-/// Separation of duties (§3): only a decision_maker grants or revokes
-/// `decision_maker`; every other role is admin business (an admin can never
-/// touch `decision_maker`, a decision_maker without admin nothing else).
+/// Separation of duties (§3, §7): who may grant or revoke `role`.
+/// - `decision_maker`: only a decision_maker — the technical admin never
+///   obtains the power to issue permits;
+/// - operational roles (`expert`, `provider`): admin or coordinator;
+/// - every other staff role: admin only.
+fn role_granters(role: &str) -> &'static [&'static str] {
+    match role {
+        "decision_maker" => &["decision_maker"],
+        "expert" | "provider" => &["admin", "coordinator"],
+        _ => &["admin"],
+    }
+}
+
+/// 403 unless the actor may manage `role` (see `role_granters`).
 /// `denied_code` is the 403 code for a non-decision_maker touching
 /// `decision_maker`.
 fn require_role_manager(actor: &Actor, role: &str, verb: &str, denied_code: &str) -> AppResult<()> {
-    if role == "decision_maker" {
-        if actor.has_role("decision_maker") {
-            Ok(())
-        } else {
-            Err(AppError::Forbidden {
-                code: denied_code.into(),
-                message: format!("only a decision_maker can {verb} decision_maker"),
-            })
-        }
-    } else {
-        authz::require_role(actor, &["admin"])
+    let granters = role_granters(role);
+    if granters.iter().any(|r| actor.has_role(r)) {
+        return Ok(());
     }
+    if role == "decision_maker" {
+        return Err(AppError::Forbidden {
+            code: denied_code.into(),
+            message: format!("only a decision_maker can {verb} decision_maker"),
+        });
+    }
+    authz::require_role(actor, granters)
 }
 
 fn validate_role(role: &str) -> AppResult<()> {
@@ -398,7 +397,15 @@ async fn grant_role(
     Path(user_id): Path<String>,
     Json(req): Json<GrantRoleRequest>,
 ) -> AppResult<impl IntoResponse> {
+    authz::require_role(&actor, ROLE_MANAGERS)?;
     validate_role(&req.role)?;
+    require_role_manager(&actor, &req.role, "grant", "cannot_grant_decision_maker")?;
+    if user_id == actor.user_id {
+        return Err(AppError::Forbidden {
+            code: "cannot_grant_self".into(),
+            message: "nobody may grant roles to themselves".into(),
+        });
+    }
 
     let exists: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE id = ?")
         .bind(&user_id)
@@ -407,8 +414,6 @@ async fn grant_role(
     if exists.is_none() {
         return Err(AppError::NotFound);
     }
-
-    require_role_manager(&actor, &req.role, "grant", "cannot_grant_decision_maker")?;
 
     let active: Option<(String,)> = sqlx::query_as(
         "SELECT user_id FROM user_roles
@@ -497,6 +502,7 @@ async fn revoke_role(
     actor: Actor,
     Path((user_id, role)): Path<(String, String)>,
 ) -> AppResult<Json<UserDto>> {
+    authz::require_role(&actor, ROLE_MANAGERS)?;
     validate_role(&role)?;
 
     require_role_manager(&actor, &role, "revoke", "protected_role")?;

@@ -19,6 +19,7 @@ import {
   useToast,
 } from "../../ui";
 import { useMe } from "../auth/api";
+import { RESOURCE_EDITORS, TARIFF_EDITORS, hasAnyRole } from "../admin/access";
 import { DateText } from "./display";
 import { money } from './displayFormat';
 import {
@@ -31,12 +32,15 @@ import {
 const kinds = ["room", "lab", "equipment", "boat", "service"];
 export function ResourcesPage() {
   const me = useMe();
-  const allowed = !!me.data?.user.roles.includes("admin");
+  const myRoles = me.data?.user.roles ?? [];
+  const allowed = hasAnyRole(myRoles, TARIFF_EDITORS);
+  // Finance edits prices only; the catalogue is the base manager's (and admin's).
+  const canEditResources = hasAnyRole(myRoles, RESOURCE_EDITORS);
   const resources = useResources(allowed);
   const users = useApiQuery<ListResponse<UserDto>>(
     ["resources", "providers"],
     "/admin/users?limit=200",
-    { enabled: allowed },
+    { enabled: canEditResources },
   );
   const [edit, setEdit] = useState<ResourceDto | "new" | null>(null);
   const [tariffResource, setTariffResource] = useState<ResourceDto | null>(
@@ -74,15 +78,23 @@ export function ResourcesPage() {
   if (!allowed)
     return (
       <Banner tone="error">
-        Resource administration requires an admin role.
+        Resources and tariffs require the admin, base manager or finance role.
       </Banner>
     );
   return (
     <div className="space-y-5">
       <PageHeader
         title="Resources and tariffs"
-        subtitle="Manage bookable rooms, equipment and services"
-        actions={<Button onClick={() => open("new")}>Add resource</Button>}
+        subtitle={
+          canEditResources
+            ? "Manage bookable rooms, equipment and services"
+            : "Set prices for bookable rooms, equipment and services"
+        }
+        actions={
+          canEditResources && (
+            <Button onClick={() => open("new")}>Add resource</Button>
+          )
+        }
       />
       {resources.isPending ? (
         <PageLoading />
@@ -130,9 +142,11 @@ export function ResourcesPage() {
               header: "Actions",
               cell: (r) => (
                 <span className="flex flex-wrap gap-1">
-                  <Button size="sm" variant="secondary" onClick={() => open(r)}>
-                    Edit
-                  </Button>
+                  {canEditResources && (
+                    <Button size="sm" variant="secondary" onClick={() => open(r)}>
+                      Edit
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="ghost"

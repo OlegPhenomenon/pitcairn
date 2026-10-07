@@ -70,6 +70,7 @@ struct VersionRow {
     file_id: String,
     note: String,
     uploaded_by: String,
+    uploaded_by_name: String,
     uploaded_at: String,
     scan_status: String,
     size: i64,
@@ -96,9 +97,11 @@ async fn load_versions(
 ) -> AppResult<Vec<DocumentVersionDto>> {
     let rows: Vec<VersionRow> = sqlx::query_as(
         "SELECT dv.id, dv.document_id, dv.number, dv.file_id, dv.note, dv.uploaded_by,
+                COALESCE(u.name, '') AS uploaded_by_name,
                 dv.uploaded_at, f.scan_status, f.size, f.mime
          FROM document_versions dv
          JOIN files f ON f.id = dv.file_id
+         LEFT JOIN users u ON u.id = dv.uploaded_by
          WHERE dv.document_id = ?
          ORDER BY dv.number DESC",
     )
@@ -114,6 +117,7 @@ async fn load_versions(
             file_id: r.file_id,
             note: r.note,
             uploaded_by: r.uploaded_by,
+            uploaded_by_name: r.uploaded_by_name,
             uploaded_at: r.uploaded_at,
             scan_status: r.scan_status,
             size: r.size,
@@ -336,9 +340,11 @@ async fn add_version(
 
     let row: VersionRow = sqlx::query_as(
         "SELECT dv.id, dv.document_id, dv.number, dv.file_id, dv.note, dv.uploaded_by,
+                COALESCE(u.name, '') AS uploaded_by_name,
                 dv.uploaded_at, f.scan_status, f.size, f.mime
          FROM document_versions dv
          JOIN files f ON f.id = dv.file_id
+         LEFT JOIN users u ON u.id = dv.uploaded_by
          WHERE dv.id = ?",
     )
     .bind(&version_id)
@@ -354,6 +360,7 @@ async fn add_version(
             file_id: row.file_id,
             note: row.note,
             uploaded_by: row.uploaded_by,
+            uploaded_by_name: row.uploaded_by_name,
             uploaded_at: row.uploaded_at,
             scan_status: row.scan_status,
             size: row.size,

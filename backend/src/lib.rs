@@ -12,6 +12,7 @@ pub mod files;
 pub mod idempotency;
 pub mod jobs;
 pub mod legacy;
+pub mod linkcheck;
 pub mod mail;
 pub mod notify;
 pub mod password;

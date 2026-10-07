@@ -17,10 +17,18 @@ pub struct TestApp {
 }
 
 pub async fn spawn_app(demo_mode: bool) -> TestApp {
+    spawn_app_with(demo_mode, |_| {}).await
+}
+
+/// `spawn_app` with a hook to adjust the config before the app starts.
+pub async fn spawn_app_with(
+    demo_mode: bool,
+    configure: impl FnOnce(&mut pitcairn::config::Config),
+) -> TestApp {
     let dir = tempfile::TempDir::new().expect("create temp dir");
     let data_dir = dir.path().to_path_buf();
 
-    let config = pitcairn::config::Config {
+    let mut config = pitcairn::config::Config {
         bind: "127.0.0.1:0".into(),
         data_dir: data_dir.clone(),
         static_dir: data_dir.join("nonexistent"),
@@ -32,9 +40,11 @@ pub async fn spawn_app(demo_mode: bool) -> TestApp {
         bank_webhook_secret_generated: false,
         max_upload_bytes: 2_147_483_648,
         link_check_mode: "mock".into(),
+        link_check_allow_private: false,
         ai_mode: "mock".into(),
         secure_cookies: false,
     };
+    configure(&mut config);
 
     config.prepare().expect("prepare config");
     let pool = pitcairn::db::connect(&config.db_path())

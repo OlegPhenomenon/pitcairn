@@ -44,6 +44,7 @@ export type { CreateDeliverableRequest } from './generated/CreateDeliverableRequ
 export type { UpdateDeliverableRequest } from './generated/UpdateDeliverableRequest';
 export type { CreateSubmissionRequest } from './generated/CreateSubmissionRequest';
 export type { SubmissionDto } from './generated/SubmissionDto';
+export type { ExternalLinkDto } from './generated/ExternalLinkDto';
 export type { UpdatePublicationRequest } from './generated/UpdatePublicationRequest';
 export type { SetPublicationFilesRequest } from './generated/SetPublicationFilesRequest';
 export type { CloseProjectRequest } from './generated/CloseProjectRequest';

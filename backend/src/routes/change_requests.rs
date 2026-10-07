@@ -191,15 +191,25 @@ async fn create_change_request(
                 "requires trip_id, new_arrive_date and new_depart_date (YYYY-MM-DD)",
             ),
         },
-        "extend_permit" => errors.check(
-            "payload.new_valid_to",
-            req.payload
-                .get("new_valid_to")
-                .and_then(Value::as_str)
-                .and_then(date)
-                .is_some(),
-            "must be a date YYYY-MM-DD",
-        ),
+        "extend_permit" => {
+            errors.check(
+                "payload.decision_id",
+                req.payload
+                    .get("decision_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| !s.trim().is_empty()),
+                "choose the permit to extend",
+            );
+            errors.check(
+                "payload.new_valid_to",
+                req.payload
+                    .get("new_valid_to")
+                    .and_then(Value::as_str)
+                    .and_then(date)
+                    .is_some(),
+                "must be a date YYYY-MM-DD",
+            );
+        }
         _ => {}
     }
     errors.finish()?;
@@ -239,6 +249,27 @@ async fn create_change_request(
                 ));
             }
             Some(_) => {}
+        }
+    }
+    if req.kind == "extend_permit"
+        && let Some(decision_id) = req.payload.get("decision_id").and_then(Value::as_str)
+    {
+        let in_force: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM decisions
+             WHERE id = ? AND project_id = ? AND status = 'issued' AND superseded_by_id IS NULL
+               AND chain_id IS NOT NULL AND kind <> 'revocation'",
+        )
+        .bind(decision_id)
+        .bind(&project_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if in_force == 0 {
+            let mut fields = HashMap::new();
+            fields.insert(
+                "payload.decision_id".to_string(),
+                "must be a permit of this project that is currently in force".to_string(),
+            );
+            return Err(AppError::Validation { fields });
         }
     }
     let id = new_id();
@@ -508,14 +539,22 @@ async fn compute_impact(
         struct DecRow {
             id: String,
             kind: String,
+            title: String,
             status: String,
             valid_from: Option<String>,
             valid_to: Option<String>,
         }
+        // Every permit in force is checked against a rescheduled trip; an
+        // extension request concerns only the one permit it names.
+        let only: Option<&str> = match cr.kind.as_str() {
+            "extend_permit" => payload.get("decision_id").and_then(Value::as_str),
+            _ => None,
+        };
         let decisions: Vec<DecRow> = sqlx::query_as(&format!(
-            "SELECT id, kind, status, valid_from, valid_to FROM decisions
+            "SELECT id, kind, title, status, valid_from, valid_to FROM decisions
              WHERE project_id = ? AND status = 'issued' AND superseded_by_id IS NULL
-               AND kind IN ({}) ORDER BY issued_at",
+               AND chain_id IS NOT NULL AND kind IN ({}) AND (? IS NULL OR id = ?)
+             ORDER BY issued_at",
             PERMIT_CHAIN
                 .iter()
                 .map(|k| format!("'{k}'"))
@@ -523,6 +562,8 @@ async fn compute_impact(
                 .join(",")
         ))
         .bind(&cr.project_id)
+        .bind(only)
+        .bind(only)
         .fetch_all(&mut **tx)
         .await?;
         for d in decisions {
@@ -539,6 +580,7 @@ async fn compute_impact(
                 impact.decisions.push(ImpactDecisionDto {
                     id: d.id,
                     kind: d.kind,
+                    title: d.title,
                     status: d.status,
                     valid_from: d.valid_from,
                     valid_to: d.valid_to,
@@ -547,10 +589,22 @@ async fn compute_impact(
         }
         if !impact.decisions.is_empty() {
             impact.requires_new_decision = true;
-            impact.notes.push(
-                "The permit in force does not cover the new dates; a new decision (amendment or extension) is needed"
-                    .into(),
-            );
+            let names = impact
+                .decisions
+                .iter()
+                .map(|d| {
+                    if d.title.is_empty() {
+                        format!("{} {}", d.kind, &d.id[..8.min(d.id.len())])
+                    } else {
+                        d.title.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            impact.notes.push(format!(
+                "{} permit(s) do not cover the new dates ({names}); each needs its own amendment or extension. Other permits are unchanged",
+                impact.decisions.len()
+            ));
         }
     }
     if cr.kind == "expand_scope" {
@@ -713,18 +767,39 @@ async fn approve_change_request(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
     if let Some(dec) = &resulting {
+        // An extension must be issued on the permit the team asked about,
+        // so the other permits of the project stay as they were.
+        let target = match cr.kind.as_str() {
+            "extend_permit" => cr
+                .payload()?
+                .get("decision_id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            _ => None,
+        };
+        // For an extension: a current (not superseded), non-revoking successor
+        // of exactly that permit — a revocation cannot "implement" it.
         let ok: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM decisions WHERE id = ? AND project_id = ? AND status = 'issued'",
+            "SELECT COUNT(*) FROM decisions WHERE id = ? AND project_id = ? AND status = 'issued'
+               AND (? IS NULL OR (supersedes_id = ? AND kind <> 'revocation'
+                                  AND superseded_by_id IS NULL))",
         )
         .bind(dec)
         .bind(&project_id)
+        .bind(&target)
+        .bind(&target)
         .fetch_one(&mut *tx)
         .await?;
         if ok == 0 {
             let mut fields = HashMap::new();
             fields.insert(
                 "resulting_decision_id".to_string(),
-                "must be an issued decision of this project".to_string(),
+                if target.is_some() {
+                    "must be the amendment or extension now in force for the permit named in the request"
+                } else {
+                    "must be an issued decision of this project"
+                }
+                .to_string(),
             );
             return Err(AppError::Validation { fields });
         }

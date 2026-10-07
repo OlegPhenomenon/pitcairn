@@ -1,5 +1,6 @@
 //! Slice C: submissions — files/links, request-changes, resubmit, accept,
-//! measurement CSV parsing and external-link checking.
+//! corrected versions of accepted results and measurement CSV parsing
+//! (external-link checks: `c_link_check.rs`).
 
 mod common;
 
@@ -257,7 +258,7 @@ async fn link_only_submission_never_auto_accepts() {
 }
 
 #[tokio::test]
-async fn submission_requires_agreed_or_changes_requested_status() {
+async fn submission_refused_before_agreement_and_for_coordinators() {
     let app = spawn_app(true).await;
     let anna = persona(&app, "anna").await;
     let project = seeded_project(&app).await;
@@ -432,90 +433,343 @@ async fn measurement_csv_parsed_on_accept_with_row_warnings() {
     assert!(rows[0].5.contains("Final report (submission #1)"));
 }
 
-#[tokio::test]
-async fn check_link_job_and_manual_check_flag_unavailable() {
-    let app = spawn_app(true).await;
-    let (anna, maria, _project, did) = dataset_setup(&app).await;
-
-    let s = submit(
-        &anna,
-        &did,
-        serde_json::json!({
-            "links": [
-                {"url": "https://data.example.org/files", "description": "good", "version_label": "1"},
-                {"url": "https://repo.pitcairn.invalid/data", "description": "bad host", "version_label": "1"},
-                {"url": "https://example.org/missing/dataset", "description": "missing path", "version_label": "1"},
-            ],
-        }),
-    )
-    .await;
-    run_jobs(&app).await;
-
-    let links: Vec<(String, String)> = sqlx::query_as(
-        "SELECT url, last_status FROM external_links WHERE submission_id = ? ORDER BY url",
-    )
-    .bind(&s.id)
-    .fetch_all(&app.pool)
-    .await
-    .unwrap();
-    assert_eq!(
-        links,
-        vec![
-            (
-                "https://data.example.org/files".to_string(),
-                "available".to_string()
-            ),
-            (
-                "https://example.org/missing/dataset".to_string(),
-                "unavailable".to_string()
-            ),
-            (
-                "https://repo.pitcairn.invalid/data".to_string(),
-                "unavailable".to_string()
-            ),
-        ]
-    );
-
-    // The coordinator dashboard query exposes the two unavailable ones.
-    // Scoped to this deliverable: the demo seed has its own unavailable link.
-    let bad: Vec<_> = pitcairn::deliverables::unavailable_links(&app.pool)
-        .await
-        .unwrap()
-        .into_iter()
-        .filter(|l| l.deliverable_id == did)
-        .collect();
-    assert_eq!(bad.len(), 2);
-    assert!(bad.iter().any(|l| l.url.contains(".invalid")));
-
-    // Maria was notified about the newly-unavailable links.
-    let n: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM notifications n JOIN users u ON u.id = n.user_id
-         WHERE u.email = ? AND n.kind = 'link.unavailable'",
-    )
-    .bind(MARIA)
-    .fetch_one(&app.pool)
-    .await
-    .unwrap();
-    assert_eq!(n.0, 2);
-
-    // Manual re-check endpoint (coordinator) works and returns fresh status.
-    let link_id: (String,) =
-        sqlx::query_as("SELECT id FROM external_links WHERE url LIKE '%missing%' LIMIT 1")
-            .fetch_one(&app.pool)
-            .await
-            .unwrap();
-    let resp = maria
-        .post(&format!("/api/v1/external-links/{}/check", link_id.0))
+async fn deliverable(
+    client: &common::Client,
+    project: &str,
+    did: &str,
+) -> pitcairn::dto::DeliverableDto {
+    let resp = client
+        .get(&format!("/api/v1/projects/{project}/deliverables"))
         .await;
     assert_eq!(resp.status(), 200);
-    let link: pitcairn::dto::ExternalLinkDto = maria.json(resp).await;
-    assert_eq!(link.last_status.as_deref(), Some("unavailable"));
-    assert_eq!(link.available, Some(false));
-    assert!(link.last_checked_at.is_some());
+    let list: pitcairn::dto::ListResponse<pitcairn::dto::DeliverableDto> = client.json(resp).await;
+    list.items
+        .into_iter()
+        .find(|d| d.id == did)
+        .expect("deliverable listed")
+}
 
-    // Non-coordinators cannot trigger checks.
-    let resp = anna
-        .post(&format!("/api/v1/external-links/{}/check", link_id.0))
+async fn download(client: &common::Client, version_id: &str) -> Vec<u8> {
+    let resp = client
+        .get(&format!("/api/v1/document-versions/{version_id}/download"))
         .await;
-    assert_eq!(resp.status(), 403);
+    assert_eq!(resp.status(), 200, "accepted file stays downloadable");
+    resp.bytes().await.unwrap().to_vec()
+}
+
+async fn measurement_values(app: &common::TestApp, did: &str) -> Vec<(String, f64)> {
+    sqlx::query_as(
+        "SELECT site_name, value FROM measurements WHERE deliverable_id = ? ORDER BY site_name",
+    )
+    .bind(did)
+    .fetch_all(&app.pool)
+    .await
+    .unwrap()
+}
+
+/// §5 item 10: a corrected table is stored as a new version; the earlier
+/// accepted one never disappears and stays in force until the correction is
+/// accepted.
+#[tokio::test]
+async fn corrected_version_keeps_earlier_accepted_until_accepted() {
+    let app = spawn_app(true).await;
+    let (anna, maria, project, did) = dataset_setup(&app).await;
+
+    // #1 accepted, its file selected for publication.
+    let csv1: &[u8] =
+        b"site,date,variable,value,unit\nBounty Bay,2030-02-01,temperature,18.4,degC\n";
+    let f1 = upload_clean_file(&anna, &app, csv1, "text/csv").await;
+    let v1 = create_document(&anna, &project, "CTD casts v1", "result", &f1).await;
+    let s1 = submit(
+        &anna,
+        &did,
+        serde_json::json!({"document_version_ids": [v1]}),
+    )
+    .await;
+    let resp = maria
+        .post(&format!("/api/v1/submissions/{}/accept", s1.id))
+        .await;
+    assert_eq!(resp.status(), 200);
+    let resp = maria
+        .put_json(
+            &format!("/api/v1/deliverables/{did}/publication-files"),
+            &serde_json::json!({"document_version_ids": [v1]}),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        measurement_values(&app, &did).await,
+        vec![("Bounty Bay".to_string(), 18.4)]
+    );
+
+    // The team submits corrected #2 on the accepted deliverable.
+    let csv2: &[u8] =
+        b"site,date,variable,value,unit\nBounty Bay,2030-02-01,temperature,18.9,degC\n";
+    let f2 = upload_clean_file(&anna, &app, csv2, "text/csv").await;
+    let v2 = create_document(&anna, &project, "CTD casts v2", "result", &f2).await;
+    let s2 = submit(
+        &anna,
+        &did,
+        serde_json::json!({"note": "fixed calibration", "document_version_ids": [v2]}),
+    )
+    .await;
+    assert_eq!(s2.number, 2);
+    assert_eq!(s2.status, "received");
+
+    // #1 is still the accepted version: deliverable stays accepted, shows the
+    // correction under review, #1 downloadable, published files unchanged,
+    // measurements untouched.
+    let d = deliverable(&anna, &project, &did).await;
+    assert_eq!(d.status, "accepted");
+    assert_eq!(d.correction_status.as_deref(), Some("under_review"));
+    let accepted = d.accepted_submission.expect("accepted submission");
+    assert_eq!(accepted.number, 1);
+    assert_eq!(accepted.status, "accepted");
+    assert_eq!(d.latest_submission.expect("latest").number, 2);
+    assert_eq!(download(&anna, &v1).await, csv1);
+    let resp = maria
+        .get(&format!("/api/v1/deliverables/{did}/publication-files"))
+        .await;
+    let files: pitcairn::dto::PublicationFilesResponse = maria.json(resp).await;
+    assert_eq!(files.document_version_ids, vec![v1.clone()]);
+    assert_eq!(
+        measurement_values(&app, &did).await,
+        vec![("Bounty Bay".to_string(), 18.4)]
+    );
+
+    // Only one correction under review at a time.
+    let resp = anna
+        .post_json(
+            &format!("/api/v1/deliverables/{did}/submissions"),
+            &serde_json::json!({"document_version_ids": [v2]}),
+        )
+        .await;
+    assert_eq!(resp.status(), 409);
+
+    // Changes requested on the correction never un-accept #1.
+    let resp = maria
+        .post_json(
+            &format!("/api/v1/submissions/{}/request-changes", s2.id),
+            &serde_json::json!({"note": "units of the second cast are wrong"}),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+    let d = deliverable(&anna, &project, &did).await;
+    assert_eq!(d.status, "accepted");
+    assert_eq!(d.correction_status.as_deref(), Some("changes_requested"));
+    assert_eq!(d.accepted_submission.expect("accepted").number, 1);
+    assert_eq!(
+        measurement_values(&app, &did).await,
+        vec![("Bounty Bay".to_string(), 18.4)]
+    );
+
+    // Resubmit #3 and accept it: #3 becomes the accepted submission and its
+    // table replaces the measurement rows.
+    let csv3: &[u8] =
+        b"site,date,variable,value,unit\nBounty Bay,2030-02-01,temperature,18.7,degC\n";
+    let f3 = upload_clean_file(&anna, &app, csv3, "text/csv").await;
+    let v3 = create_document(&anna, &project, "CTD casts v3", "result", &f3).await;
+    let s3 = submit(
+        &anna,
+        &did,
+        serde_json::json!({"document_version_ids": [v3]}),
+    )
+    .await;
+    assert_eq!(s3.number, 3);
+    let resp = maria
+        .post(&format!("/api/v1/submissions/{}/accept", s3.id))
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let d = deliverable(&anna, &project, &did).await;
+    assert_eq!(d.status, "accepted");
+    assert_eq!(d.correction_status, None);
+    let accepted = d.accepted_submission.expect("accepted");
+    assert_eq!(accepted.number, 3);
+    assert_eq!(accepted.files[0].document_version_id, v3);
+    assert_eq!(
+        measurement_values(&app, &did).await,
+        vec![("Bounty Bay".to_string(), 18.7)]
+    );
+
+    // History lists every version with its status; #1 is kept (superseded)
+    // and still downloadable.
+    let resp = anna
+        .get(&format!("/api/v1/deliverables/{did}/submissions"))
+        .await;
+    let history: pitcairn::dto::ListResponse<pitcairn::dto::SubmissionDto> = anna.json(resp).await;
+    assert_eq!(history.total, 3);
+    let statuses: Vec<(i64, &str)> = history
+        .items
+        .iter()
+        .map(|s| (s.number, s.status.as_str()))
+        .collect();
+    assert_eq!(
+        statuses,
+        vec![(3, "accepted"), (2, "changes_requested"), (1, "superseded")]
+    );
+    assert_eq!(download(&anna, &v1).await, csv1);
+
+    // An older version can no longer displace the accepted one.
+    let resp = maria
+        .post(&format!("/api/v1/submissions/{}/accept", s2.id))
+        .await;
+    assert_eq!(resp.status(), 409);
+}
+
+/// Accept #1 (one temperature row with `value`) and submit a correction with
+/// `correction_value`; returns (anna, maria, project, deliverable, #2 id).
+async fn accepted_with_correction(
+    app: &common::TestApp,
+    value: &str,
+    correction_value: &str,
+) -> (common::Client, common::Client, String, String, String) {
+    let (anna, maria, project, did) = dataset_setup(app).await;
+    let mut ids = Vec::new();
+    for (i, v) in [value, correction_value].into_iter().enumerate() {
+        let csv =
+            format!("site,date,variable,value,unit\nBounty Bay,2030-02-01,temperature,{v},degC\n");
+        let f = upload_clean_file(&anna, app, csv.as_bytes(), "text/csv").await;
+        let dv = create_document(&anna, &project, &format!("CTD {i}"), "result", &f).await;
+        let s = submit(
+            &anna,
+            &did,
+            serde_json::json!({"document_version_ids": [dv]}),
+        )
+        .await;
+        if i == 0 {
+            let resp = maria
+                .post(&format!("/api/v1/submissions/{}/accept", s.id))
+                .await;
+            assert_eq!(resp.status(), 200);
+        }
+        ids.push(s.id);
+    }
+    let correction = ids.pop().unwrap();
+    (anna, maria, project, did, correction)
+}
+
+/// The measurement rows always come from the accepted submission.
+async fn assert_measurements_mirror_accepted(app: &common::TestApp, accepted_id: &str, did: &str) {
+    let sources: Vec<(String,)> =
+        sqlx::query_as("SELECT DISTINCT submission_id FROM measurements WHERE deliverable_id = ?")
+            .bind(did)
+            .fetch_all(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(sources, vec![(accepted_id.to_string(),)]);
+}
+
+/// Review decisions are validated inside the write transaction: once a
+/// correction is accepted, a late request-changes on it is refused (409) and
+/// cannot leave the accepted submission and the measurements disagreeing.
+#[tokio::test]
+async fn review_after_accept_is_refused_and_state_stays_consistent() {
+    let app = spawn_app(true).await;
+    let (anna, maria, project, did, s2) = accepted_with_correction(&app, "18.4", "18.9").await;
+
+    // Accept #2, then request changes on #2 → 409.
+    let resp = maria
+        .post(&format!("/api/v1/submissions/{s2}/accept"))
+        .await;
+    assert_eq!(resp.status(), 200);
+    let resp = maria
+        .post_json(
+            &format!("/api/v1/submissions/{s2}/request-changes"),
+            &serde_json::json!({"note": "too late"}),
+        )
+        .await;
+    assert_eq!(resp.status(), 409);
+    let d = deliverable(&anna, &project, &did).await;
+    assert_eq!(d.status, "accepted");
+    assert_eq!(d.correction_status, None);
+    assert_eq!(d.accepted_submission.as_ref().unwrap().id, s2);
+    assert_eq!(
+        measurement_values(&app, &did).await,
+        vec![("Bounty Bay".to_string(), 18.9)]
+    );
+    assert_measurements_mirror_accepted(&app, &s2, &did).await;
+
+    // A repeated accept is refused too.
+    let resp = maria
+        .post(&format!("/api/v1/submissions/{s2}/accept"))
+        .await;
+    assert_eq!(resp.status(), 409);
+}
+
+/// The other order: changes requested on a correction first; a repeated
+/// request-changes is refused (409), #1 stays accepted with its measurements,
+/// and a later explicit acceptance of the returned correction moves the
+/// accepted submission and the measurements together.
+#[tokio::test]
+async fn review_after_request_changes_keeps_state_consistent() {
+    let app = spawn_app(true).await;
+    let (anna, maria, project, did, s2) = accepted_with_correction(&app, "18.4", "18.9").await;
+
+    let resp = maria
+        .post_json(
+            &format!("/api/v1/submissions/{s2}/request-changes"),
+            &serde_json::json!({"note": "check the calibration"}),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+    let resp = maria
+        .post_json(
+            &format!("/api/v1/submissions/{s2}/request-changes"),
+            &serde_json::json!({"note": "again"}),
+        )
+        .await;
+    assert_eq!(resp.status(), 409);
+    let d = deliverable(&anna, &project, &did).await;
+    let s1 = d.accepted_submission.as_ref().unwrap().id.clone();
+    assert_ne!(s1, s2);
+    assert_eq!(d.status, "accepted");
+    assert_eq!(d.correction_status.as_deref(), Some("changes_requested"));
+    assert_measurements_mirror_accepted(&app, &s1, &did).await;
+
+    let resp = maria
+        .post(&format!("/api/v1/submissions/{s2}/accept"))
+        .await;
+    assert_eq!(resp.status(), 200);
+    let d = deliverable(&anna, &project, &did).await;
+    assert_eq!(d.accepted_submission.as_ref().unwrap().id, s2);
+    assert_eq!(d.correction_status, None);
+    assert_measurements_mirror_accepted(&app, &s2, &did).await;
+}
+
+/// Concurrent accept and request-changes on one correction: a held write lock
+/// lets both requests pass their pre-transaction reads (both see `received`)
+/// before either can write. Whichever order the writers then serialise in,
+/// the accepted submission and the measurement rows never disagree.
+#[tokio::test]
+async fn concurrent_accept_and_request_changes_stay_consistent() {
+    let app = spawn_app(true).await;
+    let (anna, maria, project, did, s2) = accepted_with_correction(&app, "18.4", "18.9").await;
+
+    let accept_path = format!("/api/v1/submissions/{s2}/accept");
+    let changes_path = format!("/api/v1/submissions/{s2}/request-changes");
+    let note = serde_json::json!({"note": "racing review"});
+    let lock = pitcairn::db::begin_immediate(&app.pool).await.unwrap();
+    let release = async {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        lock.commit().await.unwrap();
+    };
+    let (accept, changes, ()) = tokio::join!(
+        maria.post(&accept_path),
+        maria.post_json(&changes_path, &note),
+        release
+    );
+    let (accept, changes) = (accept.status().as_u16(), changes.status().as_u16());
+    // Accept-first → request-changes 409; request-changes-first → the
+    // returned correction may still be accepted explicitly (both 200).
+    assert_eq!(accept, 200, "accept never loses: {accept}/{changes}");
+    assert!(matches!(changes, 200 | 409), "{changes}");
+
+    let d = deliverable(&anna, &project, &did).await;
+    let accepted = d.accepted_submission.expect("accepted");
+    assert_eq!(accepted.id, s2);
+    assert_eq!(accepted.status, "accepted");
+    assert_eq!(d.status, "accepted");
+    assert_eq!(d.correction_status, None);
+    assert_measurements_mirror_accepted(&app, &s2, &did).await;
 }

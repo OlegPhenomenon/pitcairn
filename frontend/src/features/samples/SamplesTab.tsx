@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router";
 import { fieldError } from "../../api/client";
 import type { CreateSampleRequest, SampleDto } from "../../api/types";
 import { formatDate } from "../../lib/format";
@@ -20,6 +21,7 @@ import {
 import { useProject } from "../projects/api";
 import { useProjectContext } from "../projects/projectContext";
 import { useSampleAction, useSamples } from "./api";
+import { deliverableHref } from "../results/links";
 export function SamplesTab() {
   const { project, me } = useProjectContext();
   const list = useSamples(project.id),
@@ -143,6 +145,26 @@ export function SamplesTab() {
               { header: "Material", cell: (s) => s.material },
               { header: "Custodian", cell: (s) => s.custodian_org },
               { header: "Storage", cell: (s) => s.storage_location },
+              {
+                header: "Related results",
+                cell: (s) =>
+                  s.related_deliverables.length === 0 ? (
+                    "—"
+                  ) : (
+                    <ul className="space-y-0.5">
+                      {s.related_deliverables.map((d) => (
+                        <li key={d.id}>
+                          <Link
+                            className="text-teal-700 underline"
+                            to={deliverableHref(project.id, d.id)}
+                          >
+                            {d.title}
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  ),
+              },
             ]}
           />
         )}

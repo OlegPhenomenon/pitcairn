@@ -2,6 +2,15 @@
 
 export type ExternalLinkDto = { id: string, submission_id: string, url: string, description: string, version_label: string, access_notes: string, last_checked_at: string | null, 
 /**
- * "available" | "unavailable" | null (never checked).
+ * "unchecked" | "available" | "missing" | "unreachable" | "login_required".
+ * `login_required` is not data loss: closed access may be agreed.
  */
-last_status: string | null, available: boolean | null, };
+check_status: string, 
+/**
+ * Final HTTP status code of the last check, when a response arrived.
+ */
+check_http_status: bigint | null, 
+/**
+ * Short reason of the last check, e.g. "Not found (HTTP 404)".
+ */
+check_reason: string, };

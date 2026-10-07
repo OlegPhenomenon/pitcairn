@@ -6,6 +6,16 @@ export type DecisionDto = { id: string, project_id: string, project_revision_id:
  */
 kind: string, 
 /**
+ * Name of the permit ("Reef transect sampling"); amendments inherit it.
+ */
+title: string, 
+/**
+ * Permit chain this decision belongs to: id of the permit that started
+ * it. A project may hold several independent chains. None for drafts and
+ * refusals.
+ */
+chain_id: string | null, 
+/**
  * draft | issued (issued is immutable)
  */
 status: string, basis: string, legal_reference: string, valid_from: string | null, valid_to: string | null, permitted_activities: Array<string>, conditions: Array<string>, restrictions: Array<string>, 

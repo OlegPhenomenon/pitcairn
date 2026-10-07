@@ -5,7 +5,7 @@ import type {
   ImportCommitResponse,
   LegacyImportPreviewResponse,
 } from "../../api/types";
-import { toNum } from "../../lib/format";
+import { formatBytes, toNum } from "../../lib/format";
 import { useMe } from "../auth/api";
 import {
   Banner,
@@ -21,26 +21,94 @@ import {
   Table,
   useToast,
 } from "../../ui";
+
+const LEGACY_COLUMNS = [
+  "reference",
+  "title",
+  "organisation",
+  "lead_name",
+  "lead_email",
+  "start_date",
+  "end_date",
+  "summary",
+  "keywords",
+  "site_name",
+  "lat",
+  "lng",
+  "report_title",
+  "report_url",
+  "report_file",
+  "dataset_title",
+  "dataset_file",
+  "application_file",
+];
+
+const LEGACY_EXAMPLE = [
+  "MSB-2009-001",
+  "Lobster census at Bounty Bay",
+  "Bounty Lobster Trust (fictional)",
+  "Dr Ada Christian",
+  "a.christian@example.org",
+  "2009-03-02",
+  "2009-03-30",
+  "Night dive census of spiny lobsters",
+  "lobsters; census",
+  "Bounty Bay",
+  "-25.066",
+  "-130.104",
+  "Lobster census report 2009",
+  "",
+  "report.pdf",
+  "Census counts",
+  "data/counts.csv;data/sites.csv",
+  "application-v1.pdf;application-v2.pdf",
+];
+
+const FILE_COLUMN_LABELS: Record<string, string> = {
+  application_file: "Application",
+  report_file: "Report",
+  dataset_file: "Dataset",
+};
+
+function downloadLegacyTemplate() {
+  // The template values contain no commas or quotes, so no CSV quoting.
+  const text = [LEGACY_COLUMNS, LEGACY_EXAMPLE]
+    .map((row) => row.join(","))
+    .join("\n");
+  const url = URL.createObjectURL(
+    new Blob([`${text}\n`], { type: "text/csv" }),
+  );
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "legacy-import-template.csv";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 export function ImportPage() {
   const toast = useToast(),
     me = useMe();
-  const [csv, setCsv] = useState<File | null>(null),
+  const [legacyFile, setLegacyFile] = useState<File | null>(null),
     [zip, setZip] = useState<File | null>(null),
     [legacy, setLegacy] = useState<LegacyImportPreviewResponse | null>(null),
     [archive, setArchive] = useState<ArchiveImportPreviewResponse | null>(null),
     [confirm, setConfirm] = useState<"legacy" | "archive" | null>(null),
     [fictional, setFictional] = useState(false);
-  const previewCsv = useApiMutation<LegacyImportPreviewResponse, File>(
+  const previewLegacy = useApiMutation<LegacyImportPreviewResponse, File>(
     (file) =>
       api("/admin/import/legacy/preview", {
         method: "POST",
         rawBody: file,
-        headers: { "Content-Type": "text/csv" },
+        headers: {
+          "Content-Type": /\.zip$/i.test(file.name)
+            ? "application/zip"
+            : "text/csv",
+        },
       }),
     {
       onSuccess: (data) => {
         setLegacy(data);
-        toast.success("CSV preview ready");
+        toast.success("Legacy import preview ready");
       },
     },
   );
@@ -92,32 +160,50 @@ export function ImportPage() {
       )}
       <div className="grid gap-5 lg:grid-cols-2">
         <Card>
-          <CardHeader title="Legacy CSV" />
+          <CardHeader
+            title="Legacy records (CSV or ZIP)"
+            actions={
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={downloadLegacyTemplate}
+              >
+                Download CSV template
+              </Button>
+            }
+          />
           <CardBody className="space-y-3">
             <p className="text-sm text-slate-600">
               Columns: reference, title, organisation, lead name and email,
-              dates, summary, keywords, site and report.
+              dates, summary, keywords, site, report and dataset. To bring old
+              applications, reports and data files along, upload a ZIP with the
+              CSV at the top and the files in a <code>files/</code> folder; name
+              them in <code>application_file</code> (versions, oldest first,
+              separated by <code>;</code>), <code>report_file</code> and{" "}
+              <code>dataset_file</code>.
             </p>
             <input
               type="file"
-              accept=".csv,text/csv"
-              aria-label="Choose legacy CSV"
-              onChange={(e) => setCsv(e.target.files?.[0] ?? null)}
+              accept=".csv,.zip,text/csv,application/zip"
+              aria-label="Choose legacy CSV or ZIP"
+              onChange={(e) => setLegacyFile(e.target.files?.[0] ?? null)}
             />
             <Button
               disabled={
-                !csv ||
+                !legacyFile ||
                 (Boolean(me.data?.demo_mode) && !fictional) ||
-                previewCsv.isPending
+                previewLegacy.isPending
               }
-              onClick={() => csv && void previewCsv.mutateAsync(csv)}
+              onClick={() =>
+                legacyFile && void previewLegacy.mutateAsync(legacyFile)
+              }
             >
-              {previewCsv.isPending
-                ? "Reading and checking CSV…"
-                : "Preview CSV"}
+              {previewLegacy.isPending
+                ? "Reading and checking records…"
+                : "Preview legacy import"}
             </Button>
-            {previewCsv.error && (
-              <Banner tone="error">{previewCsv.error.message}</Banner>
+            {previewLegacy.error && (
+              <Banner tone="error">{previewLegacy.error.message}</Banner>
             )}
           </CardBody>
         </Card>
@@ -153,7 +239,7 @@ export function ImportPage() {
       {legacy && (
         <Card className="mt-5">
           <CardHeader
-            title={`CSV preview · ${legacy.rows.length} rows`}
+            title={`Legacy import preview · ${legacy.rows.length} rows`}
             actions={
               <Button
                 disabled={badRows > 0}
@@ -167,7 +253,7 @@ export function ImportPage() {
             {badRows > 0 && (
               <Banner tone="warning">
                 {badRows} row(s) have errors or possible duplicates. Correct the
-                CSV and preview it again before committing.
+                CSV or files and preview again before committing.
               </Banner>
             )}
             <Table
@@ -181,6 +267,24 @@ export function ImportPage() {
                 {
                   header: "Organisation",
                   cell: (r) => r.data.organisation ?? "—",
+                },
+                {
+                  header: "Files",
+                  cell: (r) =>
+                    r.files.length === 0 ? (
+                      "—"
+                    ) : (
+                      <ul className="space-y-0.5 text-sm">
+                        {r.files.map((f) => (
+                          <li key={`${f.column}:${f.name}`}>
+                            {FILE_COLUMN_LABELS[f.column] ?? f.column}: {f.name}{" "}
+                            <span className="text-slate-500">
+                              ({formatBytes(f.size)})
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ),
                 },
                 {
                   header: "Issues",

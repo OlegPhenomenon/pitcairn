@@ -643,6 +643,7 @@ async fn review(
 
 struct NewDecision<'a> {
     kind: &'a str,
+    title: &'a str,
     basis: &'a str,
     valid: Option<(NaiveDate, NaiveDate)>,
     activities: Value,
@@ -673,15 +674,18 @@ async fn decision(
     let id = new_id();
     sqlx::query(
         "INSERT INTO decisions
-         (id, project_id, project_revision_id, kind, status, basis, legal_reference, valid_from,
-          valid_to, permitted_activities_json, conditions_json, restrictions_json,
+         (id, project_id, project_revision_id, kind, title, chain_id, status, basis, legal_reference,
+          valid_from, valid_to, permitted_activities_json, conditions_json, restrictions_json,
           sites_snapshot_json, drafted_by, issued_by, issued_at, created_at)
-         VALUES (?, ?, ?, ?, 'issued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, 'issued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(project_id)
     .bind(revision_id)
     .bind(d.kind)
+    .bind(d.title)
+    // Seeded permits each start their own chain; refusals have none.
+    .bind((d.kind != "refusal").then_some(&id))
     .bind(d.basis)
     .bind("Pitcairn Islands Marine Protected Area Ordinance 2016 (demo reference)")
     .bind(d.valid.map(|v| ds(v.0)))
@@ -1188,6 +1192,7 @@ async fn whales(ctx: &Ctx) -> AppResult<()> {
         &rev,
         NewDecision {
             kind: "permit",
+            title: "Hydrophone moorings",
             basis: "The study is non-invasive and supports the MPA management plan.",
             valid: Some((date("2023-07-01"), date("2023-08-31"))),
             activities: json!([
@@ -1407,6 +1412,7 @@ async fn drones(ctx: &Ctx) -> AppResult<()> {
         &rev,
         NewDecision {
             kind: "refusal",
+            title: "",
             basis: "Refused. Drone overflights at 30 m during the peak nesting season pose an unacceptable risk of disturbance to protected seabird colonies, and the application contains no disturbance mitigation plan (minimum altitude, timing outside peak nesting, abort criteria). A new application addressing these points is welcome.",
             valid: None,
             activities: json!([]),
@@ -1523,6 +1529,7 @@ Plateau transect,2024-10-07,seabird_nest_count,149,nests\n";
         &rev,
         NewDecision {
             kind: "permit",
+            title: "Seabird nest census",
             basis: "Census supports the Henderson Island World Heritage management plan.",
             valid: Some((date("2024-09-01"), date("2024-10-31"))),
             activities: json!(["Ground counts of seabird nests", "Camping at North Beach"]),
@@ -1592,15 +1599,33 @@ Plateau transect,2024-10-07,seabird_nest_count,149,nests\n";
     )
     .await?;
     submission_file(&mut tx, &sub, &csv_version, &accepted_at).await?;
+    // Reserved `.invalid` host: the deterministic demo check keeps reporting
+    // it unreachable even in `live` link-check mode.
     sqlx::query(
         "INSERT INTO external_links (id, submission_id, url, description, version_label, access_notes,
-                                     last_checked_at, last_status, available, created_at)
-         VALUES (?, ?, ?, ?, 'v1', 'Photo archive mirror', ?, 'unavailable (mock link check)', 0, ?)",
+                                     last_checked_at, check_status, check_reason, created_at)
+         VALUES (?, ?, ?, ?, 'v1', 'Photo archive mirror', ?, 'unreachable',
+                 'Host name could not be resolved (demo check)', ?)",
     )
     .bind(new_id())
     .bind(&sub)
     .bind("https://data.example.invalid/missing/henderson-seabird-photos")
     .bind("Nest photo archive (external mirror)")
+    .bind(ts(date("2025-01-05"), 3))
+    .bind(&accepted_at)
+    .execute(&mut *tx)
+    .await?;
+    // Closed-access example: shown as "login required", never as data loss.
+    sqlx::query(
+        "INSERT INTO external_links (id, submission_id, url, description, version_label, access_notes,
+                                     last_checked_at, check_status, check_reason, created_at)
+         VALUES (?, ?, ?, ?, 'v2', 'University staff login; access agreed on request', ?,
+                 'login_required', 'Login required (demo check)', ?)",
+    )
+    .bind(new_id())
+    .bind(&sub)
+    .bind("https://repository.example.org/restricted/henderson-gps-tracks")
+    .bind("Raw GPS tracks (university repository)")
     .bind(ts(date("2025-01-05"), 3))
     .bind(&accepted_at)
     .execute(&mut *tx)
@@ -1747,6 +1772,7 @@ async fn reef_fish(ctx: &Ctx, res: &Resources) -> AppResult<()> {
         &rev,
         NewDecision {
             kind: "permit",
+            title: "Reef belt-transect survey",
             basis: "Non-extractive baseline survey consistent with the MPA monitoring plan.",
             valid: Some((arrive - Duration::days(7), depart + Duration::days(30))),
             activities: json!(["SCUBA belt transects", "Boat access to Bounty Bay reef"]),
@@ -2109,6 +2135,7 @@ Down Rope transect,2026-03-16,coral_cover_percent,36.9,%\n";
         &rev,
         NewDecision {
             kind: "permit",
+            title: "Coral photo-quadrat monitoring",
             basis: "Long-term monitoring directly supports the MPA management plan.",
             valid: Some((date("2025-03-01"), date("2026-04-30"))),
             activities: json!([
@@ -2123,6 +2150,29 @@ Down Rope transect,2026-03-16,coral_cover_percent,36.9,%\n";
             drafted_by: maria,
             issued_by: helen,
             at: ts(date("2025-02-12"), 14),
+        },
+    )
+    .await?;
+    // A second, independent permit on the same project: changing one of them
+    // never changes the other (spec §5 item 5).
+    decision(
+        &mut tx,
+        &pid,
+        &rev,
+        NewDecision {
+            kind: "permit",
+            title: "Coral tissue sampling for genetics",
+            basis: "Small-fragment sampling with no measurable effect on colony survival; supports the connectivity study requested by the MPA plan.",
+            valid: Some((date("2025-03-01"), date("2025-12-31"))),
+            activities: json!(["Collection of up to 30 coral tissue fragments (at most 2 cm² each)"]),
+            conditions: json!([
+                "One fragment per colony",
+                "Each sample registered with its collection site before export"
+            ]),
+            restrictions: json!(["No sampling inside the Down Rope transect quadrats"]),
+            drafted_by: maria,
+            issued_by: helen,
+            at: ts(date("2025-02-12"), 15),
         },
     )
     .await?;

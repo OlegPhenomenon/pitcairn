@@ -202,6 +202,8 @@ pub struct DocumentVersionDto {
     pub file_id: String,
     pub note: String,
     pub uploaded_by: String,
+    /// Display name of the uploader.
+    pub uploaded_by_name: String,
     pub uploaded_at: String,
     pub scan_status: String,
     pub size: i64,
@@ -389,9 +391,13 @@ pub struct ExternalLinkDto {
     pub version_label: String,
     pub access_notes: String,
     pub last_checked_at: Option<String>,
-    /// "available" | "unavailable" | null (never checked).
-    pub last_status: Option<String>,
-    pub available: Option<bool>,
+    /// "unchecked" | "available" | "missing" | "unreachable" | "login_required".
+    /// `login_required` is not data loss: closed access may be agreed.
+    pub check_status: String,
+    /// Final HTTP status code of the last check, when a response arrived.
+    pub check_http_status: Option<i64>,
+    /// Short reason of the last check, e.g. "Not found (HTTP 404)".
+    pub check_reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -411,6 +417,9 @@ pub struct SubmissionDto {
     pub id: String,
     pub deliverable_id: String,
     pub number: i64,
+    /// "received" | "changes_requested" | "accepted" | "superseded".
+    /// "superseded" (derived): an earlier accepted version replaced by a
+    /// later accepted correction — still kept and downloadable.
     pub status: String,
     pub note: String,
     pub data_dictionary: Vec<DataDictionaryEntryDto>,
@@ -455,6 +464,11 @@ pub struct DeliverableDto {
     /// "the deliverable shows the accepted one and the latest one").
     pub latest_submission: Option<SubmissionDto>,
     pub accepted_submission: Option<SubmissionDto>,
+    /// Derived: an accepted deliverable whose team sent a corrected version
+    /// after acceptance — "under_review" (awaiting the coordinator) or
+    /// "changes_requested". `None` otherwise. The earlier accepted
+    /// submission stays the accepted one until the correction is accepted.
+    pub correction_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -565,8 +579,8 @@ pub struct CloseProjectRequest {
     pub deliverable_resolutions: Vec<DeliverableResolution>,
 }
 
-/// Coordinator dashboard row: a submitted external link that failed its
-/// availability check (§4 "Unavailable links are flagged to the coordinator").
+/// Coordinator dashboard row: a submitted external link whose last check says
+/// the data may be lost (`missing` / `unreachable`; §5 item 11).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/api/generated/")]
 pub struct UnavailableLinkDto {
@@ -574,11 +588,15 @@ pub struct UnavailableLinkDto {
     pub url: String,
     pub description: String,
     pub last_checked_at: Option<String>,
-    pub last_status: Option<String>,
+    /// "missing" | "unreachable".
+    pub check_status: String,
+    pub check_http_status: Option<i64>,
+    pub check_reason: String,
     pub submission_id: String,
     pub deliverable_id: String,
     pub deliverable_title: String,
     pub project_id: String,
+    pub project_title: String,
     pub project_reference: Option<String>,
 }
 
@@ -595,7 +613,19 @@ pub struct SampleDto {
     pub storage_location: String,
     pub notes: String,
     pub related_deliverable_ids: Vec<String>,
+    /// The linked analysis results (same order as `related_deliverable_ids`).
+    pub related_deliverables: Vec<SampleDeliverableDto>,
     pub created_at: String,
+}
+
+/// A deliverable (analysis result) linked from a sample.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct SampleDeliverableDto {
+    pub id: String,
+    pub title: String,
+    pub kind: String,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -747,6 +777,8 @@ pub struct DashboardItemDto {
     pub project_reference: Option<String>,
     pub due_date: Option<String>,
     pub valid_until: Option<String>,
+    /// When the underlying item was last checked (external links).
+    pub checked_at: Option<String>,
     pub link: String,
 }
 
@@ -846,8 +878,22 @@ pub struct MeasurementsReportResponse {
     pub series: Vec<MeasurementSeriesDto>,
 }
 
-/// One parsed CSV row of a legacy import preview, with per-field errors and
-/// the duplicate match (if any).
+/// A file of a legacy ZIP import that passed the preview checks and is
+/// stored, ready to be linked at commit.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct ImportFilePreviewDto {
+    /// `application_file`, `report_file` or `dataset_file`.
+    pub column: String,
+    /// Path below the ZIP's `files/` folder.
+    pub name: String,
+    pub size: i64,
+    pub mime: String,
+}
+
+/// One parsed CSV row of a legacy import preview, with per-field errors
+/// (file problems are keyed by their file column), the duplicate match (if
+/// any) and the accepted files.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/api/generated/")]
 pub struct ImportRowPreviewDto {
@@ -857,6 +903,7 @@ pub struct ImportRowPreviewDto {
     #[ts(type = "Record<string, string>")]
     pub errors: std::collections::BTreeMap<String, String>,
     pub duplicate_of: Option<String>,
+    pub files: Vec<ImportFilePreviewDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -984,6 +1031,7 @@ export_all!(
     MeasurementPointDto,
     MeasurementSeriesDto,
     MeasurementsReportResponse,
+    ImportFilePreviewDto,
     ImportRowPreviewDto,
     ImportBatchDto,
     LegacyImportPreviewResponse,

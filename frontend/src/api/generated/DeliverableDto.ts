@@ -10,4 +10,11 @@ agreement_state: string, resolution_note: string | null, publish_level: string, 
  * Latest submission (any status) and the latest accepted one (§4:
  * "the deliverable shows the accepted one and the latest one").
  */
-latest_submission: SubmissionDto | null, accepted_submission: SubmissionDto | null, };
+latest_submission: SubmissionDto | null, accepted_submission: SubmissionDto | null, 
+/**
+ * Derived: an accepted deliverable whose team sent a corrected version
+ * after acceptance — "under_review" (awaiting the coordinator) or
+ * "changes_requested". `None` otherwise. The earlier accepted
+ * submission stays the accepted one until the correction is accepted.
+ */
+correction_status: string | null, };

@@ -1,11 +1,13 @@
-import { useState, type FormEvent } from "react";
-import { Link } from "react-router";
-import { MapContainer, TileLayer, useMap } from "react-leaflet";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Link, useSearchParams } from "react-router";
+import { MapContainer, TileLayer, Rectangle, useMap } from "react-leaflet";
+import { formatBbox, parseBbox, type Bbox } from "./bbox";
 import '../../lib/leafletIcons';
 import { listQuery, useApiQuery } from "../../api/client";
 import type { ListResponse, SearchProjectItemDto } from "../../api/types";
 import { formatDate, toNum } from "../../lib/format";
 import {
+  Badge,
   Banner,
   Button,
   Card,
@@ -17,7 +19,14 @@ import {
   StatusBadge,
   Table,
 } from "../../ui";
-function AreaButton({ onArea }: { onArea: (bbox: string) => void }) {
+function FitToBbox({ bbox }: { bbox: Bbox | null }) {
+  const map = useMap();
+  useEffect(() => {
+    if (bbox) map.fitBounds([[bbox[1], bbox[0]], [bbox[3], bbox[2]]], { maxZoom: 14 });
+  }, [map, bbox]);
+  return null;
+}
+function AreaButton({ onArea }: { onArea: (bbox: Bbox) => void }) {
   const map = useMap();
   return (
     <button
@@ -25,9 +34,7 @@ function AreaButton({ onArea }: { onArea: (bbox: string) => void }) {
       className="absolute bottom-3 left-3 z-[400] rounded bg-white px-3 py-2 text-sm font-semibold text-teal-800 shadow"
       onClick={() => {
         const b = map.getBounds();
-        onArea(
-          [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(","),
-        );
+        onArea([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
       }}
     >
       Search this area
@@ -35,17 +42,38 @@ function AreaButton({ onArea }: { onArea: (bbox: string) => void }) {
   );
 }
 export function SearchPage() {
+  const [params, setParams] = useSearchParams();
+  const bboxParam = params.get("bbox");
+  const bbox = parseBbox(bboxParam);
+  const bboxKey = bbox ? formatBbox(bbox) : "";
+  const currentProject = params.get("project");
   const [q, setQ] = useState(""),
     [org, setOrg] = useState(""),
     [year, setYear] = useState(""),
     [status, setStatus] = useState(""),
     [overdue, setOverdue] = useState(false),
-    [bbox, setBbox] = useState(""),
     [filters, setFilters] = useState<Record<string, string>>({});
+  const query = { ...filters, bbox: bboxKey };
   const results = useApiQuery<ListResponse<SearchProjectItemDto>>(
-    ["search", filters],
-    `/search/projects${listQuery(100, 0, filters)}`,
+    ["search", query],
+    `/search/projects${listQuery(100, 0, query)}`,
   );
+  // Re-parse from the stable string so the map only refits when the area changes.
+  const fitBbox = useMemo(() => parseBbox(bboxKey), [bboxKey]);
+  function setArea(next: Bbox | null) {
+    setParams(
+      (p) => {
+        const out = new URLSearchParams(p);
+        if (next) out.set("bbox", formatBbox(next));
+        else {
+          out.delete("bbox");
+          out.delete("project");
+        }
+        return out;
+      },
+      { replace: true },
+    );
+  }
   function search(e: FormEvent) {
     e.preventDefault();
     setFilters({
@@ -54,7 +82,6 @@ export function SearchPage() {
       year,
       status,
       has_overdue: overdue ? "true" : "",
-      bbox,
     });
   }
   return (
@@ -121,23 +148,26 @@ export function SearchPage() {
           className="h-64 w-full"
         >
           <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-          <AreaButton
-            onArea={(b) => {
-              setBbox(b);
-              setFilters((v) => ({ ...v, bbox: b }));
-            }}
-          />
+          <FitToBbox bbox={fitBbox} />
+          {fitBbox && (
+            <Rectangle
+              bounds={[[fitBbox[1], fitBbox[0]], [fitBbox[3], fitBbox[2]]]}
+              pathOptions={{ color: "#0f766e", weight: 2, fillOpacity: 0.05 }}
+            />
+          )}
+          <AreaButton onArea={setArea} />
         </MapContainer>
       </div>
+      {bboxParam && !bbox && (
+        <Banner tone="warning">The area in the link is not valid and was ignored.</Banner>
+      )}
       {bbox && (
         <p className="mt-2 text-sm">
-          Area filter active.{" "}
+          Area filter active ({bboxKey}).{" "}
           <button
+            type="button"
             className="text-teal-700 underline"
-            onClick={() => {
-              setBbox("");
-              setFilters((v) => ({ ...v, bbox: "" }));
-            }}
+            onClick={() => setArea(null)}
           >
             Clear area
           </button>
@@ -160,12 +190,17 @@ export function SearchPage() {
               {
                 header: "Project",
                 cell: (r) => (
-                  <Link
-                    className="font-medium text-teal-700 underline"
-                    to={`/app/projects/${r.id}`}
-                  >
-                    {r.title}
-                  </Link>
+                  <>
+                    <Link
+                      className="font-medium text-teal-700 underline"
+                      to={`/app/projects/${r.id}`}
+                    >
+                      {r.title}
+                    </Link>
+                    {r.id === currentProject && (
+                      <Badge tone="teal" className="ml-2">This project</Badge>
+                    )}
+                  </>
                 ),
               },
               { header: "Reference", cell: (r) => r.reference ?? "—" },

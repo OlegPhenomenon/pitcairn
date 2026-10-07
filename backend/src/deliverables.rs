@@ -1,10 +1,10 @@
 //! Deliverables domain logic shared across routes, the job worker and other
 //! slices (architecture §4 "Deliverables").
 //!
-//! - the mock external-link checker (`PITCAIRN_LINK_CHECK_MODE=mock`, §2.1)
 //! - the `check_link` job executor and the daily link-check enqueue pass the
-//!   worker calls once per UTC day (reminders: `jobs::reminders`)
-//! - `unavailable_links` — the coordinator dashboard query slice D consumes
+//!   worker calls once per UTC day (the checker itself: `crate::linkcheck`;
+//!   reminders: `jobs::reminders`)
+//! - `unavailable_links` — the coordinator dashboard query (lost links only)
 //! - the ONE documented measurement CSV format (`site,date,variable,value,unit`)
 
 use serde_json::json;
@@ -13,6 +13,7 @@ use sqlx::SqlitePool;
 use crate::AppState;
 use crate::dto::UnavailableLinkDto;
 use crate::error::{AppError, AppResult};
+use crate::linkcheck::{self, LinkStatus};
 use crate::util::now_rfc3339;
 use crate::{jobs, notify};
 
@@ -31,52 +32,17 @@ pub const PUBLICATION_WARNING: &str =
 pub const MEASUREMENT_HEADER: [&str; 5] = ["site", "date", "variable", "value", "unit"];
 
 // ---------------------------------------------------------------------------
-// Mock link checker (§2.1)
-// ---------------------------------------------------------------------------
-
-/// Mock link availability: `http(s)` URLs whose host ends `.invalid` or whose
-/// path contains `/missing` are unavailable, everything else is available.
-/// Non-http(s) URLs are treated as unavailable (SSRF guard, §11 — the mock
-/// never fetches, so this only gates what the UI may show as "checked").
-pub fn link_available(url: &str, _mode: &str) -> bool {
-    let rest = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"));
-    let Some(rest) = rest else { return false };
-    let (host, path) = match rest.find('/') {
-        Some(i) => (&rest[..i], &rest[i..]),
-        None => (rest, "/"),
-    };
-    let host = host.split(':').next().unwrap_or("").to_ascii_lowercase();
-    if host.is_empty() {
-        return false;
-    }
-    !(host.ends_with(".invalid") || path.contains("/missing"))
-}
-
-/// Shape check used by request validation: only `http(s)` URLs with a host.
-pub fn is_http_url(url: &str) -> bool {
-    let Some(rest) = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-    else {
-        return false;
-    };
-    let host = rest.split('/').next().unwrap_or("");
-    !host.is_empty() && host.len() <= 253
-}
-
-// ---------------------------------------------------------------------------
 // Job executors
 // ---------------------------------------------------------------------------
 
-/// `check_link` job: run the mock checker for one external link and store the
-/// outcome. When a link newly turns unavailable the deliverable recipient is
-/// notified (unavailable links are flagged to the coordinator, §4).
+/// `check_link` job: check one external link (live or mock, see
+/// `crate::linkcheck`) and store status, HTTP code, reason and check time.
+/// The deliverable recipient (the coordinator) is notified only when the link
+/// newly turns `missing`/`unreachable` — never for `login_required`, which may
+/// be agreed closed access — and only once until it recovers.
 pub async fn run_link_check(state: &AppState, external_link_id: &str) -> AppResult<()> {
-    let row: Option<(String, String, Option<i64>, String, String, String)> = sqlx::query_as(
-        "SELECT l.url, l.submission_id, l.available,
-                d.recipient_id, d.title, d.project_id
+    let row: Option<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT l.url, l.check_status, d.recipient_id, d.title, d.project_id
          FROM external_links l
          JOIN deliverable_submissions s ON s.id = l.submission_id
          JOIN deliverables d ON d.id = s.deliverable_id
@@ -85,33 +51,50 @@ pub async fn run_link_check(state: &AppState, external_link_id: &str) -> AppResu
     .bind(external_link_id)
     .fetch_optional(&state.pool)
     .await?;
-    let Some((url, _submission_id, was_available, recipient_id, title, project_id)) = row else {
+    let Some((url, previous, recipient_id, title, project_id)) = row else {
         // Link deleted; nothing to check, treat as done.
         return Ok(());
     };
 
-    let available = link_available(&url, &state.config.link_check_mode);
+    // Network IO happens outside any DB transaction.
+    let outcome = linkcheck::check(
+        &url,
+        &state.config.link_check_mode,
+        state.config.link_check_allow_private,
+    )
+    .await;
     let now = now_rfc3339();
-    let newly_unavailable = !available && was_available != Some(0);
+    let newly_lost = outcome.status.is_lost() && !LinkStatus::parse(&previous).is_lost();
 
     let mut tx = crate::db::begin_immediate(&state.pool).await?;
     sqlx::query(
-        "UPDATE external_links SET last_checked_at = ?, last_status = ?, available = ? WHERE id = ?",
+        "UPDATE external_links
+         SET last_checked_at = ?, check_status = ?, check_http_status = ?, check_reason = ?
+         WHERE id = ?",
     )
     .bind(&now)
-    .bind(if available { "available" } else { "unavailable" })
-    .bind(available as i64)
+    .bind(outcome.status.as_str())
+    .bind(outcome.http_status.map(i64::from))
+    .bind(&outcome.reason)
     .bind(external_link_id)
     .execute(&mut *tx)
     .await?;
 
-    if newly_unavailable {
+    if newly_lost {
+        let what = if outcome.status == LinkStatus::Missing {
+            "Submitted data link is missing"
+        } else {
+            "Submitted data link is unreachable"
+        };
         notify::notify(
             &mut tx,
             &recipient_id,
             "link.unavailable",
-            "Submitted link is unavailable",
-            &format!("A link submitted for deliverable \"{title}\" could not be reached: {url}"),
+            what,
+            &format!(
+                "A link submitted for deliverable \"{title}\" failed its check ({}): {url}",
+                outcome.reason
+            ),
             &format!("/app/projects/{project_id}/results"),
             Some(&project_id),
         )
@@ -145,7 +128,7 @@ pub async fn enqueue_daily_jobs(state: &AppState) -> AppResult<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Coordinator dashboard query (used by slice D)
+// Coordinator dashboard query
 // ---------------------------------------------------------------------------
 
 #[derive(sqlx::FromRow)]
@@ -154,26 +137,32 @@ struct UnavailableLinkRow {
     url: String,
     description: String,
     last_checked_at: Option<String>,
-    last_status: Option<String>,
+    check_status: String,
+    check_http_status: Option<i64>,
+    check_reason: String,
     submission_id: String,
     deliverable_id: String,
     deliverable_title: String,
     project_id: String,
+    project_title: String,
     project_reference: Option<String>,
 }
 
-/// Every submitted external link whose last check failed, with the context a
-/// coordinator needs to chase it up.
+/// Every submitted external link whose last check says the data may be lost
+/// (`missing` / `unreachable`), with the context a coordinator needs to chase
+/// it up. `login_required` links are not listed: closed access is not loss.
 pub async fn unavailable_links(pool: &SqlitePool) -> AppResult<Vec<UnavailableLinkDto>> {
     let rows: Vec<UnavailableLinkRow> = sqlx::query_as(
-        "SELECT l.id AS link_id, l.url, l.description, l.last_checked_at, l.last_status,
+        "SELECT l.id AS link_id, l.url, l.description, l.last_checked_at,
+                l.check_status, l.check_http_status, l.check_reason,
                 s.id AS submission_id, d.id AS deliverable_id,
-                d.title AS deliverable_title, d.project_id, p.reference AS project_reference
+                d.title AS deliverable_title, d.project_id, p.title AS project_title,
+                p.reference AS project_reference
          FROM external_links l
          JOIN deliverable_submissions s ON s.id = l.submission_id
          JOIN deliverables d ON d.id = s.deliverable_id
          JOIN projects p ON p.id = d.project_id
-         WHERE l.available = 0
+         WHERE l.check_status IN ('missing', 'unreachable')
          ORDER BY l.last_checked_at DESC",
     )
     .fetch_all(pool)
@@ -185,11 +174,14 @@ pub async fn unavailable_links(pool: &SqlitePool) -> AppResult<Vec<UnavailableLi
             url: r.url,
             description: r.description,
             last_checked_at: r.last_checked_at,
-            last_status: r.last_status,
+            check_status: r.check_status,
+            check_http_status: r.check_http_status,
+            check_reason: r.check_reason,
             submission_id: r.submission_id,
             deliverable_id: r.deliverable_id,
             deliverable_title: r.deliverable_title,
             project_id: r.project_id,
+            project_title: r.project_title,
             project_reference: r.project_reference,
         })
         .collect())
@@ -294,18 +286,23 @@ pub async fn submission_measurements(
     Ok((rows, warnings))
 }
 
-/// Persist parsed measurement rows for an accepted submission.
+/// Make the deliverable's measurement rows mirror its newly accepted
+/// submission: rows of earlier (now superseded) versions are removed and the
+/// parsed rows inserted, inside the caller's acceptance transaction.
 /// `source_label` = "<project reference> — <deliverable title> (submission #n)".
-pub async fn insert_measurements(
-    pool: &SqlitePool,
+pub async fn replace_measurements(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     project_id: &str,
     deliverable_id: &str,
     submission_id: &str,
     source_label: &str,
     rows: &[ParsedMeasurement],
 ) -> AppResult<()> {
+    sqlx::query("DELETE FROM measurements WHERE deliverable_id = ?")
+        .bind(deliverable_id)
+        .execute(&mut **tx)
+        .await?;
     let now = now_rfc3339();
-    let mut tx = crate::db::begin_immediate(pool).await?;
     for r in rows {
         sqlx::query(
             "INSERT INTO measurements
@@ -324,10 +321,9 @@ pub async fn insert_measurements(
         .bind(&r.unit)
         .bind(source_label)
         .bind(&now)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     }
-    tx.commit().await?;
     Ok(())
 }
 

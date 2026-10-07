@@ -9,6 +9,7 @@ import { useLogout, useMe } from '../features/auth/api';
 import { NotificationsBell } from '../features/notifications/NotificationsBell';
 import { PersonaSwitcher } from '../features/demo/PersonaSwitcher';
 import type { MeResponse } from '../api/types';
+import { ROLE_MANAGERS, TARIFF_EDITORS, TEMPLATE_EDITORS } from '../features/admin/access';
 
 interface NavItem {
   to: string;
@@ -36,14 +37,16 @@ function navItems(me: MeResponse): NavItem[] {
   return items;
 }
 
-const ADMIN_ITEMS: NavItem[] = [
-  { to: '/app/admin/templates', label: 'Templates' },
-  { to: '/app/admin/import', label: 'Import' },
-  { to: '/app/admin/users', label: 'Users' },
-  { to: '/app/admin/resources', label: 'Resources & tariffs' },
-  { to: '/app/admin/settings', label: 'Settings' },
-  { to: '/app/admin/jobs', label: 'Jobs' },
-  { to: '/app/admin/audit', label: 'Audit log' },
+// Settings screens, each shown only to the roles that may use it.
+const ADMIN_ITEMS: (NavItem & { roles: string[] })[] = [
+  { to: '/app/admin/templates', label: 'Templates', roles: TEMPLATE_EDITORS },
+  { to: '/app/admin/import', label: 'Import', roles: ['admin'] },
+  { to: '/app/admin/users', label: 'Users', roles: ROLE_MANAGERS },
+  // Tariff editors include every resource editor.
+  { to: '/app/admin/resources', label: 'Resources & tariffs', roles: TARIFF_EDITORS },
+  { to: '/app/admin/settings', label: 'Settings', roles: ['admin'] },
+  { to: '/app/admin/jobs', label: 'Jobs', roles: ['admin'] },
+  { to: '/app/admin/audit', label: 'Audit log', roles: ['admin'] },
 ];
 
 function useLogoutFlow() {
@@ -94,7 +97,8 @@ export function AppLayout() {
   if (!me.data) return null;
 
   const user = me.data.user;
-  const isAdmin = user.roles.includes('admin');
+  const adminItems = ADMIN_ITEMS.filter((i) => i.roles.some((r) => user.roles.includes(r)));
+  const menuLabel = user.roles.includes('admin') ? 'Admin' : 'Settings';
   const items = navItems(me.data);
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
@@ -137,7 +141,7 @@ export function AppLayout() {
                 {i.label}
               </NavLink>
             ))}
-            {isAdmin && (
+            {adminItems.length > 0 && (
               <Dropdown
                 menuLabel="Administration"
                 align="left"
@@ -151,12 +155,12 @@ export function AppLayout() {
                     )}
                   >
                     <Settings2 className="size-4" aria-hidden />
-                    Admin
+                    {menuLabel}
                     <ChevronDown className="size-3.5" aria-hidden />
                   </button>
                 )}
               >
-                {(close) => ADMIN_ITEMS.map((i) => (
+                {(close) => adminItems.map((i) => (
                   <NavLink
                     key={i.to}
                     to={i.to}
@@ -251,12 +255,12 @@ export function AppLayout() {
                     {i.label}
                   </NavLink>
                 ))}
-                {isAdmin && (
+                {adminItems.length > 0 && (
                   <>
                     <p className="mt-3 px-3 text-xs font-semibold tracking-wide text-navy-300 uppercase">
-                      Admin
+                      {menuLabel}
                     </p>
-                    {ADMIN_ITEMS.map((i) => (
+                    {adminItems.map((i) => (
                       <NavLink key={i.to} to={i.to} className={linkClass}>
                         {i.label}
                       </NavLink>

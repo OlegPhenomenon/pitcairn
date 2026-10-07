@@ -7,6 +7,7 @@ export type CreateChangeRequestRequest = {
 kind: string, description: string, 
 /**
  * For reschedule_trip: {trip_id, new_arrive_date, new_depart_date}.
- * For extend_permit: {new_valid_to}.
+ * For extend_permit: {decision_id, new_valid_to} — decision_id is the
+ * permit in force to extend; other permits are not affected.
  */
 payload: Record<string, unknown>, };

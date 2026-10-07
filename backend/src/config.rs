@@ -14,7 +14,12 @@ pub struct Config {
     pub bank_webhook_secret: String,
     pub bank_webhook_secret_generated: bool,
     pub max_upload_bytes: u64,
+    /// `live` (default): real HTTP check, except reserved demo hosts which
+    /// keep the deterministic mock; `mock`: the mock for every URL.
     pub link_check_mode: String,
+    /// Test-only: let the live link check reach loopback/private addresses
+    /// (`PITCAIRN_LINK_CHECK_ALLOW_PRIVATE=true`). Never set in production.
+    pub link_check_allow_private: bool,
     pub ai_mode: String,
     pub secure_cookies: bool,
 }
@@ -54,7 +59,9 @@ impl Config {
             max_upload_bytes: env("PITCAIRN_MAX_UPLOAD_BYTES")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(2_147_483_648),
-            link_check_mode: env("PITCAIRN_LINK_CHECK_MODE").unwrap_or_else(|| "mock".into()),
+            link_check_mode: env("PITCAIRN_LINK_CHECK_MODE").unwrap_or_else(|| "live".into()),
+            link_check_allow_private: env("PITCAIRN_LINK_CHECK_ALLOW_PRIVATE").as_deref()
+                == Some("true"),
             ai_mode: env("PITCAIRN_AI_MODE").unwrap_or_else(|| "mock".into()),
             secure_cookies: env("PITCAIRN_SECURE_COOKIES").as_deref() == Some("true"),
         }
@@ -74,6 +81,18 @@ impl Config {
         if self.bank_webhook_secret_generated {
             tracing::warn!(
                 "PITCAIRN_BANK_WEBHOOK_SECRET not set; generated a random secret for this start"
+            );
+        }
+        if !matches!(self.link_check_mode.as_str(), "live" | "mock") {
+            tracing::warn!(
+                mode = %self.link_check_mode,
+                "unknown PITCAIRN_LINK_CHECK_MODE; using `live` (expected `live` or `mock`)"
+            );
+        }
+        if self.link_check_allow_private {
+            tracing::warn!(
+                "PITCAIRN_LINK_CHECK_ALLOW_PRIVATE=true: link checks may reach private and \
+                 loopback addresses (test setting, never use in production)"
             );
         }
         Ok(())

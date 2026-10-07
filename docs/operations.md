@@ -57,9 +57,10 @@ pool).
 
 ## First admin and first decision maker
 
-The UI can grant every role *except* `decision_maker` (separation of
-duties: only an existing decision maker, or the server operator via the CLI,
-can create another). Bootstrap over the CLI:
+The admin can grant every role *except* `decision_maker` (separation of
+duties: only an existing decision maker — in the UI under Settings → Users —
+or the server operator via the CLI, can create another). Bootstrap over the
+CLI:
 
 ```sh
 pitcairn create-admin --email admin@example.gov --name "Site Admin"
@@ -78,11 +79,26 @@ is a deliberate `protected_user` 409; use the CLI.
 
 ## Configuring the installation in the UI
 
-Everything below lives under `/app/admin/*` (admin role) and needs no
-restart:
+Everything below lives under `/app/admin/*` (the header's *Admin* menu, or
+*Settings* for non-admin staff) and needs no restart. Each screen is open to
+the roles that own the data:
+
+| Screen | Roles |
+|---|---|
+| Users — list/search | admin, decision_maker, coordinator (base_manager may list users to pick a provider) |
+| Users — create, edit, disable | admin |
+| Grant/revoke `decision_maker` | decision_maker only (admin gets 403 `cannot_grant_decision_maker`) |
+| Grant/revoke `expert`, `provider` | admin, coordinator |
+| Grant/revoke `coordinator`, `base_manager`, `finance`, `admin` | admin |
+| Templates | admin, coordinator |
+| Resources | admin, base_manager |
+| Tariffs (prices) | admin, base_manager, finance |
+| Settings, Jobs, Audit log, Import | admin |
+
+Nobody may grant a role to themselves (403 `cannot_grant_self`).
 
 - **Users** (`admin/users`): create users, grant/revoke roles, disable
-  accounts. Not `decision_maker` (see above).
+  accounts. Each user only sees the role controls they may use.
 - **Templates** (`admin/templates`): application form schemas. Draft a new
   version, publish it; new projects bind the latest published version and
   old drafts show an upgrade banner. Never edit a published version —
@@ -96,8 +112,9 @@ restart:
   (e.g. `PIT` → `PIT-2026-0001`), `public_catalog_enabled`, and
   `mail_enabled` (off = simulate a mail outage; jobs queue and fail into
   Admin → Jobs).
-- **Import** (`admin/import`): legacy CSV and project-archive ZIP, each with
-  a preview step before commit.
+- **Import** (`admin/import`): legacy records (CSV, or ZIP with old
+  documents and result files) and project-archive ZIP, each with a preview
+  step before commit.
 - **Jobs** (`admin/jobs`): failed/dead background jobs with retry.
 - **Audit log** (`admin/audit`): every significant change.
 
@@ -159,14 +176,55 @@ the old binary.
   Admin → Import → "Project archive ZIP" (preview shows conflicts, then
   commit).
 - Legacy records: `backend/fixtures/legacy_projects_sample.csv` is a working
-  example of the legacy CSV format:
+  example of the legacy CSV format (Admin → Import also offers a
+  downloadable template):
 
-  `reference,title,organisation,lead_name,lead_email,start_date,end_date,summary,keywords,site_name,lat,lng,report_title,report_url`
+  `reference,title,organisation,lead_name,lead_email,start_date,end_date,summary,keywords,site_name,lat,lng,report_title,report_url,report_file,dataset_title,dataset_file,application_file`
+
+  Only the first seven columns are required. To import old documents and
+  results, upload a **ZIP** with the CSV at its top level (one wrapping
+  folder is fine) and the files under `files/`; file columns name paths
+  below `files/`:
+  - `application_file` — `;`-separated, oldest first: the versions of the
+    project's "Application" document.
+  - `report_file` — one file attached to the accepted report deliverable
+    `report_title` (alongside `report_url` when both are given).
+  - `dataset_file` — `;`-separated: the files of an accepted dataset
+    deliverable `dataset_title` (default "Dataset").
+
+  Allowed file types: PDF, TXT/MD, CSV/TSV, PNG/JPEG/GIF/TIFF, DOCX, XLSX,
+  ZIP, NetCDF. Each file must be within the upload size limit
+  (`PITCAIRN_MAX_UPLOAD_BYTES`) and pass the same scanner as uploads.
 
   Preview flags missing required fields, bad dates, coordinates outside the
-  Pitcairn EEZ bounding box, and duplicates (same reference, or same
-  normalized title+organisation+year). Commit creates closed `legacy=1`
-  projects. Upload via Admin → Import → "Legacy CSV".
+  Pitcairn EEZ bounding box, duplicates (same reference, or same normalized
+  title+organisation+year), and per-file problems (missing from the ZIP,
+  type not allowed, oversize, rejected by the scan, or file columns in a
+  plain CSV). The admin UI blocks commit while any row has an error or a
+  possible duplicate. Commit creates closed `legacy=1` projects with their
+  documents (all versions) and accepted, metadata-published deliverables.
+  Upload via Admin → Import → "Legacy records (CSV or ZIP)".
+
+## External link checks
+
+Submitted result links (data left in a university repository) are checked
+on submission, once a day, and when a coordinator presses *Check now* on the
+deliverable. Outcomes: `available`, `missing` (HTTP 404/410), `unreachable`
+(DNS failure, timeout, refused connection, TLS error, 5xx, refused by the
+SSRF guard) and `login_required` (401/403/407 or a redirect to a login
+page — shown as such, never as data loss). Only `missing`/`unreachable`
+reach the coordinator dashboard and trigger a notification.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PITCAIRN_LINK_CHECK_MODE` | `live` | `live`: real HTTP check (`HEAD`, ranged `GET` fallback, 10 s timeouts, ≤ 5 redirects) for every URL except reserved demo hosts (`*.invalid`, `*.example`, `*.test`, `example.org/.com/.net`), which keep the deterministic mock. `mock`: never touch the network (offline installs, tests). |
+| `PITCAIRN_LINK_CHECK_ALLOW_PRIVATE` | `false` | Test only. `true` lets the live check reach loopback/private/link-local addresses; leave unset in production (logged as a warning at start-up). |
+
+The server needs outbound HTTPS (port 443, sometimes 80) to the
+repositories; HTTP proxies from the environment are deliberately ignored
+because the checker vets and pins every address it connects to. Links that
+resolve to private or local addresses are reported `unreachable` with
+reason "Refused: address is in a private or local network".
 
 ## Demo mode vs production
 
@@ -247,3 +305,9 @@ production), and provide the same three secret names.
   attached to `publication_files` on a `metadata_and_files` deliverable past
   its embargo are downloadable; personal documents, application answers and
   internal material are never public.
+- **Every external link shows "Unreachable"**: the server has no outbound
+  HTTP(S) access (firewall, or egress only via a proxy — the checker ignores
+  proxies). Check the reason on the deliverable ("Connection timed out",
+  "Host name could not be resolved"…); set `PITCAIRN_LINK_CHECK_MODE=mock`
+  on an air-gapped installation. "Login required" is not an error: the
+  repository needs a sign-in, which may be the agreed closed access.

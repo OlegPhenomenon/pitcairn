@@ -4,57 +4,12 @@
 
 use std::io::Write;
 use std::path::Path;
-use std::sync::Arc;
 
-use super::TestApp;
+use super::{TestApp, spawn_app_with};
 
 /// Like `spawn_app(true)` but with `PITCAIRN_AI_MODE` = `ai_mode`.
 pub async fn spawn_app_with_ai(ai_mode: &str) -> TestApp {
-    let dir = tempfile::TempDir::new().expect("create temp dir");
-    let data_dir = dir.path().to_path_buf();
-    let config = pitcairn::config::Config {
-        bind: "127.0.0.1:0".into(),
-        data_dir: data_dir.clone(),
-        static_dir: data_dir.join("nonexistent"),
-        base_url: "http://localhost".into(),
-        demo_mode: true,
-        session_secret: "test-session-secret-0000000000000000000000000000".into(),
-        session_secret_generated: false,
-        bank_webhook_secret: "test-bank-webhook-secret-000000000000000000000000".into(),
-        bank_webhook_secret_generated: false,
-        max_upload_bytes: 2_147_483_648,
-        link_check_mode: "mock".into(),
-        ai_mode: ai_mode.into(),
-        secure_cookies: false,
-    };
-    config.prepare().expect("prepare config");
-    let pool = pitcairn::db::connect(&config.db_path())
-        .await
-        .expect("connect db");
-    pitcairn::db::migrate(&pool).await.expect("migrate db");
-    pitcairn::seed::seed_demo(&pool).await.expect("seed demo");
-    let config = Arc::new(config);
-    let mail = Arc::new(pitcairn::mail::DemoMailbox::new(pool.clone()));
-    let state = pitcairn::AppState::new(pool.clone(), config, mail);
-    let app = pitcairn::build_app(state.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind");
-    let port = listener.local_addr().unwrap().port();
-    tokio::spawn(async move {
-        axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        )
-        .await
-        .expect("serve");
-    });
-    TestApp {
-        base_url: format!("http://127.0.0.1:{port}"),
-        state,
-        pool,
-        _dir: dir,
-    }
+    spawn_app_with(true, |config| config.ai_mode = ai_mode.into()).await
 }
 
 /// A brand-new install: migrated, nothing seeded.

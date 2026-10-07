@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useSearchParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiGet, fieldError, useApiQuery } from "../../api/client";
 import type {
@@ -29,6 +30,7 @@ import {
 } from "../../ui";
 import { FileUpload } from "../upload/FileUpload";
 import {
+  documentVersionDownloadUrl,
   projectDocsKey,
   useCreateDocument,
   useProjectDocuments,
@@ -44,9 +46,20 @@ import {
   useSubmitResult,
   useUpdateDeliverable,
 } from "./api";
-import { agreementText, isOverdue } from "./display";
+import { agreementText, isOverdue, linkCheckView } from "./display";
+import { LinkedSamples } from "../samples/LinkedSamples";
 
 const kinds = ["report", "dataset", "media", "samples", "other"];
+
+/** Status badge label; an accepted deliverable may carry a correction. */
+function deliverableStatusLabel(d: DeliverableDto): string | undefined {
+  if (d.status !== "accepted") return undefined;
+  if (d.correction_status === "under_review")
+    return "Accepted · correction under review";
+  if (d.correction_status === "changes_requested")
+    return "Accepted · correction needs changes";
+  return "Results receipt accepted";
+}
 
 export function ResultsTab() {
   const { project, me } = useProjectContext();
@@ -54,9 +67,23 @@ export function ResultsTab() {
   const coordinator = Boolean(me?.user.roles.includes("coordinator"));
   const editor = ["team_editor", "team_lead"].includes(project.my_access);
   const [formOpen, setFormOpen] = useState(false);
-  const [selected, setSelected] = useState<DeliverableDto | null>(null);
   const [closeOpen, setCloseOpen] = useState(false);
   const items = workspace.data?.results.deliverables ?? [];
+  // The open deliverable lives in the URL (?deliverable=<id>) so results can
+  // be linked to, e.g. from a sample's "Related results".
+  const [params, setParams] = useSearchParams();
+  const selected =
+    items.find((d) => d.id === params.get("deliverable")) ?? null;
+  const select = (id: string | null) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (id) next.set("deliverable", id);
+        else next.delete("deliverable");
+        return next;
+      },
+      { replace: true },
+    );
   return (
     <div className="space-y-5">
       <Card>
@@ -72,7 +99,7 @@ export function ResultsTab() {
                 <Button
                   size="sm"
                   onClick={() => {
-                    setSelected(null);
+                    select(null);
                     setFormOpen(true);
                   }}
                 >
@@ -115,7 +142,7 @@ export function ResultsTab() {
                   cell: (d) => (
                     <button
                       className="text-left font-semibold text-teal-800 underline"
-                      onClick={() => setSelected(d)}
+                      onClick={() => select(d.id)}
                     >
                       {d.title}
                     </button>
@@ -151,11 +178,7 @@ export function ResultsTab() {
                   cell: (d) => (
                     <StatusBadge
                       status={d.status}
-                      label={
-                        d.status === "accepted"
-                          ? "Results receipt accepted"
-                          : undefined
-                      }
+                      label={deliverableStatusLabel(d)}
                     />
                   ),
                 },
@@ -167,12 +190,12 @@ export function ResultsTab() {
       {selected && (
         <DeliverableDetail
           key={selected.id}
-          item={items.find((d) => d.id === selected.id) ?? selected}
+          item={selected}
           editor={editor}
           coordinator={coordinator}
           demo={Boolean(me?.demo_mode)}
           onEdit={() => setFormOpen(true)}
-          onClose={() => setSelected(null)}
+          onClose={() => select(null)}
         />
       )}
       <DeliverableForm
@@ -399,12 +422,20 @@ function DeliverableDetail({
   onClose: () => void;
 }) {
   const action = useResultAction(item.project_id),
+    linkCheck = useResultAction(item.project_id),
     history = useSubmissionHistory(item.project_id, item.id),
     toast = useToast();
   const [note, setNote] = useState("");
   const [review, setReview] = useState<"changes" | "accept" | "waive" | null>(
     null,
   );
+  const [correcting, setCorrecting] = useState(false);
+  const acceptedNumber = item.accepted_submission
+    ? toNum(item.accepted_submission.number)
+    : null;
+  const latestNumber = item.latest_submission
+    ? toNum(item.latest_submission.number)
+    : null;
   const canAgree =
     item.status === "proposed" &&
     ((editor && !item.team_agreed_at) ||
@@ -435,11 +466,7 @@ function DeliverableDetail({
         <div className="flex flex-wrap gap-2 text-sm">
           <StatusBadge
             status={item.status}
-            label={
-              item.status === "accepted"
-                ? "Results receipt accepted"
-                : undefined
-            }
+            label={deliverableStatusLabel(item)}
           />
           <span>{agreementText(item)}</span>
           <span>Terms version {toNum(item.terms_version)}</span>
@@ -451,6 +478,19 @@ function DeliverableDetail({
           </time>{" "}
           · {item.sender_name} sends to {item.recipient_name}
         </p>
+        {item.correction_status && (
+          <Banner
+            tone={
+              item.correction_status === "under_review" ? "info" : "warning"
+            }
+          >
+            {item.correction_status === "under_review"
+              ? `Corrected version (submission ${latestNumber}) is awaiting review.`
+              : `Changes were requested on the corrected version (submission ${latestNumber}).`}{" "}
+            Submission {acceptedNumber} stays the accepted version until
+            Pitcairn accepts a correction.
+          </Banner>
+        )}
         {(editor || coordinator) &&
           ["proposed", "agreed", "submitted", "changes_requested"].includes(
             item.status,
@@ -471,6 +511,25 @@ function DeliverableDetail({
         {editor && ["agreed", "changes_requested"].includes(item.status) && (
           <SubmitResult item={item} demo={demo} />
         )}
+        {editor &&
+          item.status === "accepted" &&
+          item.correction_status !== "under_review" &&
+          (correcting ? (
+            <SubmitResult
+              item={item}
+              demo={demo}
+              correction
+              onDone={() => setCorrecting(false)}
+            />
+          ) : (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setCorrecting(true)}
+            >
+              Submit corrected version
+            </Button>
+          ))}
         <section>
           <h3 className="font-semibold">Submission history</h3>
           {history.isPending ? (
@@ -507,42 +566,79 @@ function DeliverableDetail({
                     </p>
                   )}
                   {s.files.map((f) => (
-                    <p key={f.document_version_id}>{f.title}</p>
-                  ))}
-                  {s.links.map((l) => (
-                    <p key={l.id}>
+                    <p key={f.document_version_id}>
                       <a
                         className="text-teal-700 underline"
-                        href={l.url}
-                        target="_blank"
-                        rel="noreferrer"
+                        href={documentVersionDownloadUrl(f.document_version_id)}
                       >
-                        {l.description}
-                      </a>{" "}
-                      · {l.version_label} ·{" "}
-                      <StatusBadge
-                        status={
-                          l.available === false
-                            ? "failed"
-                            : l.available === true
-                              ? "active"
-                              : "pending"
-                        }
-                        label={
-                          l.available === false
-                            ? "Unavailable"
-                            : l.available === true
-                              ? "Available"
-                              : "Checking"
-                        }
-                      />
+                        {f.title}
+                      </a>
                     </p>
                   ))}
+                  {s.links.map((l) => {
+                    const check = linkCheckView(l);
+                    const path = `/external-links/${l.id}/check`;
+                    return (
+                      <div key={l.id} className="mt-1">
+                        <p className="flex flex-wrap items-center gap-x-1">
+                          <a
+                            className="text-teal-700 underline"
+                            href={l.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {l.description || l.url}
+                          </a>{" "}
+                          · {l.version_label} ·{" "}
+                          <StatusBadge
+                            status={l.check_status}
+                            label={check.label}
+                            tone={check.tone}
+                          />
+                          {coordinator && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              loading={
+                                linkCheck.isPending &&
+                                linkCheck.variables?.path === path
+                              }
+                              disabled={linkCheck.isPending}
+                              onClick={() =>
+                                void linkCheck
+                                  .mutateAsync({ path })
+                                  .then(() => toast.success("Link checked"))
+                                  .catch(() => {
+                                    /* toast from hook */
+                                  })
+                              }
+                            >
+                              Check now
+                            </Button>
+                          )}
+                        </p>
+                        <p className="break-all text-xs text-slate-500">
+                          {l.url}
+                        </p>
+                        {check.detail && (
+                          <p className="text-xs text-slate-600">
+                            {check.detail}
+                          </p>
+                        )}
+                        {l.access_notes && (
+                          <p className="text-xs text-slate-500">
+                            Access: {l.access_notes}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               ))}
             </div>
           )}
         </section>
+        <LinkedSamples projectId={item.project_id} deliverableId={item.id} />
         {coordinator && item.latest_submission?.status === "received" && (
           <div className="flex gap-2">
             <Button
@@ -553,7 +649,9 @@ function DeliverableDetail({
               Request changes
             </Button>
             <Button size="sm" onClick={() => setReview("accept")}>
-              Accept receipt
+              {item.correction_status
+                ? "Accept corrected version"
+                : "Accept receipt"}
             </Button>
           </div>
         )}
@@ -614,6 +712,13 @@ function DeliverableDetail({
                 ? "This ends the obligation to deliver this item. The note will be recorded."
                 : "The team will be asked to correct this submission."}
           </p>
+          {item.correction_status && review !== "waive" && (
+            <p className="mb-3 text-sm text-slate-700">
+              {review === "accept"
+                ? `Submission ${latestNumber} becomes the accepted version and its measurement table replaces the earlier one in reports. Submission ${acceptedNumber} stays in the history as superseded; published files stay as selected until you change them.`
+                : `Submission ${acceptedNumber} stays the accepted version.`}
+            </p>
+          )}
           {review !== "accept" && (
             <FormField
               label="Note"
@@ -632,7 +737,18 @@ function DeliverableDetail({
   );
 }
 
-function SubmitResult({ item, demo }: { item: DeliverableDto; demo: boolean }) {
+function SubmitResult({
+  item,
+  demo,
+  correction = false,
+  onDone,
+}: {
+  item: DeliverableDto;
+  demo: boolean;
+  /** A corrected version of an accepted deliverable. */
+  correction?: boolean;
+  onDone?: () => void;
+}) {
   const docs = useProjectDocuments(item.project_id),
     create = useCreateDocument(item.project_id),
     submit = useSubmitResult(item.project_id, item.id),
@@ -683,15 +799,27 @@ function SubmitResult({ item, demo }: { item: DeliverableDto; demo: boolean }) {
           .filter((l) => l.url)
           .map((l) => ({ ...l, access_notes: l.access_notes || null })),
       });
-      toast.success("Results submitted");
+      toast.success(
+        correction ? "Corrected version submitted" : "Results submitted",
+      );
       setChosen([]);
+      onDone?.();
     } catch {
       /* inline errors */
     }
   }
   return (
     <section className="rounded-lg border border-teal-200 bg-teal-50/50 p-4">
-      <h3 className="font-semibold">Submit results</h3>
+      <h3 className="font-semibold">
+        {correction ? "Submit corrected version" : "Submit results"}
+      </h3>
+      {correction && (
+        <p className="mt-1 text-sm text-slate-700">
+          The correction is stored as a new version. The accepted version stays
+          in force — and in reports and the catalog — until Pitcairn accepts the
+          correction. Include every file of the corrected version.
+        </p>
+      )}
       <form onSubmit={(e) => void send(e)} className="mt-3 space-y-3">
         <FormField label="File title" error={fieldError(create.error, "title")}>
           <Input value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -831,9 +959,20 @@ function SubmitResult({ item, demo }: { item: DeliverableDto; demo: boolean }) {
           <Textarea value={note} onChange={(e) => setNote(e.target.value)} />
         </FormField>
         {submit.error && <Banner tone="error">{submit.error.message}</Banner>}
-        <Button type="submit" disabled={submit.isPending}>
-          {submit.isPending ? "Submitting…" : "Submit results"}
-        </Button>
+        <div className="flex gap-2">
+          <Button type="submit" disabled={submit.isPending}>
+            {submit.isPending
+              ? "Submitting…"
+              : correction
+                ? "Submit corrected version"
+                : "Submit results"}
+          </Button>
+          {correction && onDone && (
+            <Button type="button" variant="secondary" onClick={onDone}>
+              Cancel
+            </Button>
+          )}
+        </div>
       </form>
     </section>
   );

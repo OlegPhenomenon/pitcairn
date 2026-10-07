@@ -2,7 +2,7 @@ import { Link } from "react-router";
 import { Plus } from "lucide-react";
 import { useApiQuery } from "../../api/client";
 import type { DashboardResponse } from "../../api/types";
-import { formatDate } from "../../lib/format";
+import { formatDate, formatDateTime } from "../../lib/format";
 import { decisionKindLabel } from "../../lib/decisionKind";
 import {
   Banner,
@@ -117,6 +117,14 @@ export function DashboardPage() {
                                 </time>
                               )}
                               {item.valid_until && <time dateTime={item.valid_until} title={item.valid_until}>Valid until {formatDate(item.valid_until)}</time>}
+                              {item.checked_at && (
+                                <time
+                                  dateTime={item.checked_at}
+                                  title={item.checked_at}
+                                >
+                                  Last checked {formatDateTime(item.checked_at)}
+                                </time>
+                              )}
                               {item.kind === "decision" && (
                                 <StatusBadge
                                   status="issued"

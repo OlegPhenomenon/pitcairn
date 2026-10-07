@@ -3,4 +3,10 @@ import type { DataDictionaryEntryDto } from "./DataDictionaryEntryDto";
 import type { ExternalLinkDto } from "./ExternalLinkDto";
 import type { SubmissionFileDto } from "./SubmissionFileDto";
 
-export type SubmissionDto = { id: string, deliverable_id: string, number: bigint, status: string, note: string, data_dictionary: Array<DataDictionaryEntryDto>, submitted_by: string, submitted_at: string, reviewed_by: string | null, review_note: string | null, reviewed_at: string | null, files: Array<SubmissionFileDto>, links: Array<ExternalLinkDto>, };
+export type SubmissionDto = { id: string, deliverable_id: string, number: bigint, 
+/**
+ * "received" | "changes_requested" | "accepted" | "superseded".
+ * "superseded" (derived): an earlier accepted version replaced by a
+ * later accepted correction — still kept and downloadable.
+ */
+status: string, note: string, data_dictionary: Array<DataDictionaryEntryDto>, submitted_by: string, submitted_at: string, reviewed_by: string | null, review_note: string | null, reviewed_at: string | null, files: Array<SubmissionFileDto>, links: Array<ExternalLinkDto>, };

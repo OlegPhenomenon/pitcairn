@@ -138,6 +138,7 @@ const DEFERRED_COLUMNS: &[(&str, &str)] = &[
     ("change_requests", "resulting_decision_id"),
     ("decisions", "supersedes_id"),
     ("decisions", "superseded_by_id"),
+    ("decisions", "chain_id"),
 ];
 
 /// Every table name an archive may carry under `records/`: the project
@@ -710,6 +711,7 @@ const PROJECT_REFS: &[(&str, &str, Parent)] = &[
     ),
     ("decisions", "supersedes_id", Parent::Table("decisions")),
     ("decisions", "superseded_by_id", Parent::Table("decisions")),
+    ("decisions", "chain_id", Parent::Table("decisions")),
     (
         "decisions",
         "change_request_id",
@@ -988,6 +990,13 @@ async fn insert_row(
             format!("unknown table {table}"),
         ));
     }
+    let upgraded;
+    let row = if table == "external_links" && row.contains_key("available") {
+        upgraded = upgrade_external_link_row(row);
+        &upgraded
+    } else {
+        row
+    };
     let known: HashSet<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info(?)")
         .bind(table)
         .fetch_all(&mut **tx)
@@ -1025,6 +1034,21 @@ async fn insert_row(
     }
     q.execute(&mut **tx).await?;
     Ok(())
+}
+
+/// Archives exported before migration 0510 carry the boolean link check
+/// (`available`, `last_status`); map it the same way the migration did.
+fn upgrade_external_link_row(row: &Map<String, Value>) -> Map<String, Value> {
+    let mut row = row.clone();
+    row.remove("last_status");
+    let (status, reason) = match row.remove("available").and_then(|v| v.as_i64()) {
+        Some(1) => ("available", "Reachable (earlier check)"),
+        Some(0) => ("unreachable", "Unavailable (earlier check)"),
+        _ => ("unchecked", ""),
+    };
+    row.insert("check_status".into(), Value::from(status));
+    row.insert("check_reason".into(), Value::from(reason));
+    row
 }
 
 struct Remaps {
@@ -1382,13 +1406,52 @@ pub async fn commit_archive(
         }
     }
 
-    // Keep reference counters ahead of the imported reference so a future
-    // submit in the same year can never collide with the imported number.
-    if let Some(r) = &reference
-        && let Some((prefix, rest)) = r.split_once('-')
-        && let Some((year_s, n_s)) = rest.rsplit_once('-')
-        && let (Ok(year), Ok(n)) = (year_s.parse::<i64>(), n_s.parse::<i64>())
-    {
+    // Archives exported before migration 0500 carry permits without a chain:
+    // rebuild chains and default names exactly like the migration did, so
+    // the imported permits stay amendable, extendable and revocable.
+    sqlx::query(
+        "WITH RECURSIVE chain(id, root) AS (
+             SELECT id, id FROM decisions
+              WHERE project_id = ? AND status = 'issued' AND supersedes_id IS NULL
+                AND chain_id IS NULL
+                AND kind IN ('permit', 'amendment', 'extension', 'revocation')
+             UNION ALL
+             SELECT d.id, chain.root FROM decisions d JOIN chain ON d.supersedes_id = chain.id
+              WHERE d.status = 'issued'
+         )
+         UPDATE decisions SET chain_id = (SELECT root FROM chain WHERE chain.id = decisions.id)
+          WHERE id IN (SELECT id FROM chain) AND chain_id IS NULL",
+    )
+    .bind(&project_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE decisions SET title = 'Research permit'
+          WHERE project_id = ? AND chain_id IS NOT NULL AND title = ''",
+    )
+    .bind(&project_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // Keep reference counters ahead of every imported number (project
+    // reference, invoice numbers) so a later allocation in the same year can
+    // never collide with an imported one.
+    let invoice_numbers = parsed
+        .records
+        .get("invoices")
+        .into_iter()
+        .flatten()
+        .filter_map(|row| cell(row, "number").as_str());
+    for number in reference.as_deref().into_iter().chain(invoice_numbers) {
+        let Some((prefix, rest)) = number.split_once('-') else {
+            continue;
+        };
+        let Some((year_s, n_s)) = rest.rsplit_once('-') else {
+            continue;
+        };
+        let (Ok(year), Ok(n)) = (year_s.parse::<i64>(), n_s.parse::<i64>()) else {
+            continue;
+        };
         sqlx::query(
             "INSERT INTO reference_counters (prefix, year, next) VALUES (?, ?, ?)
              ON CONFLICT(prefix, year) DO UPDATE SET next = MAX(next, excluded.next)",

@@ -49,6 +49,7 @@ fn item(
         project_reference,
         due_date,
         valid_until: None,
+        checked_at: None,
         link,
     }
 }
@@ -522,29 +523,26 @@ async fn coordinator_sections(
             )
         })
         .collect();
-    let rows: Vec<DashRow> = sqlx::query_as(
-        "SELECT el.id, d.project_id, p.title AS project_title, p.reference,
-                d.due_date AS due, el.url AS extra
-         FROM external_links el
-         JOIN deliverable_submissions s ON s.id = el.submission_id
-         JOIN deliverables d ON d.id = s.deliverable_id
-         JOIN projects p ON p.id = d.project_id
-         WHERE el.available = 0
-         ORDER BY el.created_at DESC LIMIT 50",
-    )
-    .fetch_all(&state.pool)
-    .await?;
-    overdue.extend(rows.into_iter().map(|r| {
-        let pid = r.project_id.clone().unwrap_or_default();
-        item(
+    // Lost external links (missing / unreachable) — login-required links are
+    // not data loss and stay off this list.
+    let links = crate::deliverables::unavailable_links(&state.pool).await?;
+    overdue.extend(links.into_iter().take(50).map(|l| {
+        let headline = if l.check_status == "missing" {
+            "Data link missing"
+        } else {
+            "Data link unreachable"
+        };
+        let mut entry = item(
             "external_link",
-            format!("Link unavailable: {}", r.extra.unwrap_or_default()),
-            r.project_title.clone().unwrap_or_default(),
-            Some(pid.clone()),
-            r.reference,
-            r.due,
-            format!("/app/projects/{pid}/results"),
-        )
+            format!("{headline}: {}", l.url),
+            format!("{} · {}", l.project_title, l.check_reason),
+            Some(l.project_id.clone()),
+            l.project_reference,
+            None,
+            format!("/app/projects/{}/results", l.project_id),
+        );
+        entry.checked_at = l.last_checked_at;
+        entry
     }));
     sections.insert("overdue_results".into(), overdue);
 

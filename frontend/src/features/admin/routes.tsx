@@ -4,12 +4,22 @@ import { AdminUsersPage } from './UsersPage';
 import { SettingsPage } from './SettingsPage';
 import { JobsPage } from './JobsPage';
 import { AuditPage } from './AuditPage';
+import { ROLE_MANAGERS } from './access';
 
-export const adminRoutes: RouteObject[] = [{
-  path: 'admin', element: <RequireRole roles={['admin']} />, children: [
-    { path: 'users', element: <AdminUsersPage /> },
-    { path: 'settings', element: <SettingsPage /> },
-    { path: 'jobs', element: <JobsPage /> },
-    { path: 'audit', element: <AuditPage /> },
-  ],
-}];
+export const adminRoutes: RouteObject[] = [
+  {
+    path: 'admin/users',
+    element: (
+      <RequireRole roles={ROLE_MANAGERS}>
+        <AdminUsersPage />
+      </RequireRole>
+    ),
+  },
+  {
+    path: 'admin', element: <RequireRole roles={['admin']} />, children: [
+      { path: 'settings', element: <SettingsPage /> },
+      { path: 'jobs', element: <JobsPage /> },
+      { path: 'audit', element: <AuditPage /> },
+    ],
+  },
+];

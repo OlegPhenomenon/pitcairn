@@ -22,24 +22,29 @@ fn v2_schema() -> Value {
 }
 
 #[tokio::test]
-async fn template_v2_published_after_submission_old_revision_renders_with_v1() {
+async fn coordinator_publishes_template_v2_old_revision_renders_with_v1() {
     let app = spawn_app(true).await;
     let anna = persona(&app, "anna").await;
     let admin = persona(&app, "admin").await;
+    // Pitcairn staff configure application forms themselves (§5.2, §7).
+    let maria = persona(&app, "maria").await;
+    let sam = persona(&app, "sam").await;
 
     let submitted = fieldwork_draft(&anna, "Submitted under v1").await;
     let (status, _) = submit(&anna, &submitted, None).await;
     assert_eq!(status, 200);
     let draft = fieldwork_draft(&anna, "Still a draft").await;
 
-    // Admin-only, schema validated against the fixed field-type palette.
-    let (status, _) = post(
-        &anna,
-        "/templates/fieldwork_permit/versions",
-        json!({"schema": v2_schema()}),
-    )
-    .await;
-    assert_eq!(status, 403);
+    // Coordinator or admin only; schema validated against the fixed palette.
+    for outsider in [&anna, &sam] {
+        let (status, _) = post(
+            outsider,
+            "/templates/fieldwork_permit/versions",
+            json!({"schema": v2_schema()}),
+        )
+        .await;
+        assert_eq!(status, 403);
+    }
     let mut bad = v2_schema();
     bad["sections"][0]["fields"][1]["type"] = json!("signature");
     let (status, err) = post(
@@ -55,7 +60,7 @@ async fn template_v2_published_after_submission_old_revision_renders_with_v1() {
     );
 
     let (status, v2) = post(
-        &admin,
+        &maria,
         "/templates/fieldwork_permit/versions",
         json!({"schema": v2_schema()}),
     )
@@ -66,15 +71,22 @@ async fn template_v2_published_after_submission_old_revision_renders_with_v1() {
         (Some(2), Some("draft"))
     );
     let v2_id = v2["id"].as_str().unwrap();
+    let (status, _) = post(
+        &sam,
+        &format!("/template-versions/{v2_id}/publish"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, 403, "a base manager cannot publish forms");
     let (status, _) = put(
-        &admin,
+        &maria,
         &format!("/template-versions/{v2_id}"),
         json!({"schema": v2_schema()}),
     )
     .await;
     assert_eq!(status, 200, "drafts are editable");
     let (status, published) = post(
-        &admin,
+        &maria,
         &format!("/template-versions/{v2_id}/publish"),
         json!({}),
     )
@@ -82,7 +94,7 @@ async fn template_v2_published_after_submission_old_revision_renders_with_v1() {
     assert_eq!(status, 200, "{published}");
     assert_eq!(published["status"], "published");
     let (status, err) = put(
-        &admin,
+        &maria,
         &format!("/template-versions/{v2_id}"),
         json!({"schema": v2_schema()}),
     )

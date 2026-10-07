@@ -49,6 +49,10 @@ pub fn router() -> Router<AppState> {
         .route("/template-versions/{id}/publish", post(publish_version))
 }
 
+/// Template editors (§5.2, §7): Pitcairn staff (coordinator) configure
+/// application fields, documents and hints; the technical admin too.
+const TEMPLATE_EDITORS: &[&str] = &["admin", "coordinator"];
+
 /// Validate `schema_json` shape and the fixed field-type palette.
 /// Returns 422 with per-field errors keyed `sections[i].fields[j].<attr>`.
 /// Shared by the template routes; schema *reading* helpers used on submit
@@ -327,7 +331,7 @@ async fn create_version(
     Path(key): Path<String>,
     Json(req): Json<TemplateSchemaRequest>,
 ) -> AppResult<impl IntoResponse> {
-    authz::require_role(&actor, &["admin"])?;
+    authz::require_role(&actor, TEMPLATE_EDITORS)?;
     validate_template_schema(&req.schema)?;
 
     let template: Option<(String,)> = sqlx::query_as("SELECT id FROM templates WHERE key = ?")
@@ -394,7 +398,7 @@ async fn update_version(
     Path(id): Path<String>,
     Json(req): Json<TemplateSchemaRequest>,
 ) -> AppResult<Json<TemplateVersionDto>> {
-    authz::require_role(&actor, &["admin"])?;
+    authz::require_role(&actor, TEMPLATE_EDITORS)?;
     validate_template_schema(&req.schema)?;
 
     let mut tx = db::begin_immediate(&state.pool).await?;
@@ -452,7 +456,7 @@ async fn publish_version(
     actor: Actor,
     Path(id): Path<String>,
 ) -> AppResult<Json<TemplateVersionDto>> {
-    authz::require_role(&actor, &["admin"])?;
+    authz::require_role(&actor, TEMPLATE_EDITORS)?;
 
     let mut tx = db::begin_immediate(&state.pool).await?;
     let row: Option<(String, String, i64)> = sqlx::query_as(
