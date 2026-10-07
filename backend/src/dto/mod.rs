@@ -95,6 +95,33 @@ pub struct AcceptInvitationResponse {
     pub project_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct CreateUploadRequest {
+    pub filename: String,
+    pub size: u64,
+    pub sha256: String,
+    pub mime: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct UploadStateDto {
+    pub upload_id: String,
+    pub chunk_size: u64,
+    pub chunks_total: u64,
+    pub chunks_received: Vec<u64>,
+    pub status: String,
+    pub file_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct CompleteUploadResponse {
+    pub file_id: String,
+    pub scan_status: String,
+}
+
 impl ListQuery {
     pub fn limit(&self) -> i64 {
         self.limit.unwrap_or(50).clamp(1, 200)
@@ -116,4 +143,7 @@ export_all!(
     MfaEnrollResponse,
     MfaCodeRequest,
     AcceptInvitationResponse,
+    CreateUploadRequest,
+    UploadStateDto,
+    CompleteUploadResponse,
 );
