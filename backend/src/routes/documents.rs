@@ -90,33 +90,37 @@ struct VersionDownloadRow {
     scan_status: String,
 }
 
-async fn load_latest_version(
+/// All versions of a document, newest first. Old versions stay accessible (§4).
+async fn load_versions(
     pool: &sqlx::SqlitePool,
     document_id: &str,
-) -> AppResult<Option<DocumentVersionDto>> {
-    let row: Option<VersionRow> = sqlx::query_as(
+) -> AppResult<Vec<DocumentVersionDto>> {
+    let rows: Vec<VersionRow> = sqlx::query_as(
         "SELECT dv.id, dv.document_id, dv.number, dv.file_id, dv.note, dv.uploaded_by,
                 dv.uploaded_at, f.scan_status, f.size, f.mime
          FROM document_versions dv
          JOIN files f ON f.id = dv.file_id
          WHERE dv.document_id = ?
-         ORDER BY dv.number DESC LIMIT 1",
+         ORDER BY dv.number DESC",
     )
     .bind(document_id)
-    .fetch_optional(pool)
+    .fetch_all(pool)
     .await?;
-    Ok(row.map(|r| DocumentVersionDto {
-        id: r.id,
-        document_id: r.document_id,
-        number: r.number,
-        file_id: r.file_id,
-        note: r.note,
-        uploaded_by: r.uploaded_by,
-        uploaded_at: r.uploaded_at,
-        scan_status: r.scan_status,
-        size: r.size,
-        mime: r.mime,
-    }))
+    Ok(rows
+        .into_iter()
+        .map(|r| DocumentVersionDto {
+            id: r.id,
+            document_id: r.document_id,
+            number: r.number,
+            file_id: r.file_id,
+            note: r.note,
+            uploaded_by: r.uploaded_by,
+            uploaded_at: r.uploaded_at,
+            scan_status: r.scan_status,
+            size: r.size,
+            mime: r.mime,
+        })
+        .collect())
 }
 
 async fn list_documents(
@@ -144,7 +148,7 @@ async fn list_documents(
         if !authz::can_view_document_category(&actor, access, &row.category) {
             continue;
         }
-        let latest = load_latest_version(&state.pool, &row.id).await?;
+        let versions = load_versions(&state.pool, &row.id).await?;
         items.push(DocumentDto {
             id: row.id,
             project_id: row.project_id,
@@ -153,7 +157,8 @@ async fn list_documents(
             category: row.category,
             created_by: row.created_by,
             created_at: row.created_at,
-            latest_version: latest,
+            latest_version: versions.first().cloned(),
+            versions,
         });
     }
     let total = items.len() as i64;
@@ -241,7 +246,7 @@ async fn create_document(
 
     tx.commit().await?;
 
-    let latest = load_latest_version(&state.pool, &doc_id).await?;
+    let versions = load_versions(&state.pool, &doc_id).await?;
     Ok((
         StatusCode::CREATED,
         Json(DocumentDto {
@@ -252,7 +257,8 @@ async fn create_document(
             category: req.category,
             created_by: actor.user_id,
             created_at: now,
-            latest_version: latest,
+            latest_version: versions.first().cloned(),
+            versions,
         }),
     ))
 }

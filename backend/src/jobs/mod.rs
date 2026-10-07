@@ -7,8 +7,8 @@
 //! because a job fails: job rows are written in the same transaction as the
 //! business change, and the worker only mutates job/side-effect rows.
 //!
-//! Later slices add kinds `check_link` and `deliverable_reminders` as new
-//! arms in `execute`.
+//! Slice C adds kinds `check_link` and `deliverable_reminders` (in
+//! `crate::deliverables`) plus the once-per-day enqueue pass below.
 
 use serde_json::Value;
 
@@ -169,7 +169,18 @@ async fn execute(state: &AppState, job: &JobRow) -> AppResult<()> {
             scan_file(state, file_id).await
         }
         KIND_CLEANUP_UPLOADS => cleanup_uploads(state).await,
-        // Later slices add: "check_link", "deliverable_reminders".
+        crate::deliverables::KIND_CHECK_LINK => {
+            let link_id = payload["external_link_id"].as_str().ok_or_else(|| {
+                AppError::BadRequest("check_link payload missing external_link_id".into())
+            })?;
+            crate::deliverables::run_link_check(state, link_id).await
+        }
+        crate::deliverables::KIND_DELIVERABLE_REMINDERS => {
+            let deliverable_id = payload["deliverable_id"].as_str().ok_or_else(|| {
+                AppError::BadRequest("deliverable_reminders payload missing deliverable_id".into())
+            })?;
+            crate::deliverables::run_deliverable_reminder(state, deliverable_id).await
+        }
         other => Err(AppError::BadRequest(format!("unknown job kind: {other}"))),
     }
 }
@@ -280,13 +291,23 @@ async fn cleanup_uploads(state: &AppState) -> AppResult<()> {
 }
 
 /// Run due jobs until the queue is drained or shutdown fires; used by `serve`.
+/// Once per UTC day it also enqueues the daily batch (link checks and
+/// deliverable reminders, deduped by date — re-runs are no-ops).
 pub async fn worker_loop(state: AppState, mut shutdown: tokio::sync::watch::Receiver<bool>) {
+    let mut last_daily: Option<String> = None;
     loop {
         // Finish the current job before honoring shutdown (graceful stop).
         match run_once(&state).await {
             Ok(true) => continue, // drain without sleeping
             Ok(false) => {}
             Err(e) => tracing::error!(error = %e, "job worker iteration failed"),
+        }
+        let today = crate::deliverables::today();
+        if last_daily.as_deref() != Some(today.as_str()) {
+            last_daily = Some(today);
+            if let Err(e) = crate::deliverables::enqueue_daily_jobs(&state).await {
+                tracing::error!(error = %e, "daily job enqueue failed");
+            }
         }
         tokio::select! {
             _ = shutdown.changed() => {

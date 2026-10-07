@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{IntoResponse, Response};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -23,11 +23,12 @@ use crate::authz::{self, Actor, ProjectAccess};
 use crate::db;
 use crate::dto::a::{
     ApplicationSectionDto, DiffEntryDto, PatchProjectRequest, PatchProjectResponse,
-    PrimaryMessageDto, ProjectWorkspaceDto, RevisionDiffDto, RevisionDto, SubmitResponse,
-    TeamMemberDto, UpgradeTemplateResponse, WithdrawRequest, WorkspaceCountsDto,
+    RevisionDiffDto, RevisionDto, SubmitResponse, TeamMemberDto, UpgradeTemplateResponse,
+    WithdrawRequest, WorkspaceCountsDto,
 };
 use crate::dto::{
-    AuditEventDto, CreateProjectRequest, ListQuery, ListResponse, ProjectDto, ProjectListItemDto,
+    AuditEventDto, CreateProjectRequest, ListQuery, ListResponse, PrimaryMessageDto, ProjectDto,
+    ProjectListItemDto, ProjectWorkspaceDto,
 };
 use crate::error::{AppError, AppResult};
 use crate::idempotency;
@@ -587,7 +588,7 @@ async fn primary_message(
 ) -> AppResult<Option<PrimaryMessageDto>> {
     let side = match access {
         ProjectAccess::TeamViewer | ProjectAccess::TeamEditor | ProjectAccess::TeamLead => "team",
-        ProjectAccess::Staff if actor.is_coordinator() => "staff",
+        ProjectAccess::Staff => "staff",
         ProjectAccess::Expert => {
             let row: Option<(String, Option<String>, String, String)> = sqlx::query_as(
                 "SELECT ra.id, ra.due_date, ra.created_at, u.name
@@ -600,10 +601,12 @@ async fn primary_message(
             .fetch_optional(&state.pool)
             .await?;
             return Ok(row.map(|(id, due, created_at, name)| PrimaryMessageDto {
-                text: match due {
+                text: match &due {
                     Some(d) => format!("{name} asks you to review this application by {d}"),
                     None => format!("{name} asks you to review this application"),
                 },
+                title: "review this application".into(),
+                by_name: name,
                 action_item_id: None,
                 thread_id: None,
                 review_id: Some(id),
@@ -624,15 +627,16 @@ async fn primary_message(
     .await?;
     Ok(row.map(|(id, thread_id, title, created_at, name)| {
         let first = name.split_whitespace().next().unwrap_or(&name).to_string();
-        let title = title.trim_end_matches('.');
+        let ask = title.trim_end_matches('.');
         let text = if side == "team" {
-            let lowered = lower_first(title);
-            format!("{first} asks you to {lowered}")
+            format!("{first} asks you to {}", lower_first(ask))
         } else {
-            format!("{first}: {title}")
+            format!("{first}: {ask}")
         };
         PrimaryMessageDto {
             text,
+            title,
+            by_name: name,
             action_item_id: Some(id),
             thread_id: Some(thread_id),
             review_id: None,
@@ -735,12 +739,29 @@ async fn get_project(
     actor: Actor,
     Path(project_id): Path<String>,
 ) -> AppResult<Json<ProjectWorkspaceDto>> {
-    let access = require_project_access(&state, &actor, &project_id).await?;
-    Ok(Json(ProjectWorkspaceDto {
-        project: load_project_dto(&state, &actor, &project_id).await?,
-        primary_message: primary_message(&state, &actor, access, &project_id).await?,
-        application: workspace_section(&state, &actor, access, &project_id).await?,
-    }))
+    require_project_access(&state, &actor, &project_id).await?;
+    Ok(Json(load_workspace(&state, &actor, &project_id).await?))
+}
+
+/// Full workspace payload for `GET /projects/{id}` (§5). Each slice adds ONE
+/// section field to `ProjectWorkspaceDto` and one assembly line here.
+/// Callers must have checked project access already.
+pub async fn load_workspace(
+    state: &AppState,
+    actor: &Actor,
+    project_id: &str,
+) -> AppResult<ProjectWorkspaceDto> {
+    let access = authz::project_access(&state.pool, actor, project_id).await?;
+    let (trips, invoices) =
+        super::trips::workspace_section(&state.pool, actor, project_id, access).await?;
+    Ok(ProjectWorkspaceDto {
+        project: load_project_dto(state, actor, project_id).await?,
+        primary_message: primary_message(state, actor, access, project_id).await?,
+        application: workspace_section(state, actor, access, project_id).await?,
+        results: crate::routes::deliverables::workspace_section(&state.pool, project_id).await?,
+        trips,
+        invoices,
+    })
 }
 
 /// Slice A's workspace section: bound template schema (+ outdated flag),
@@ -975,22 +996,13 @@ async fn build_snapshot(
     }))
 }
 
-fn replay_response(status: u16, body: String) -> Response {
-    (
-        StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
-        [(header::CONTENT_TYPE, "application/json")],
-        body,
-    )
-        .into_response()
-}
-
 async fn submit_project(
     State(state): State<AppState>,
     actor: Actor,
     Path(project_id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
-) -> AppResult<Response> {
+) -> AppResult<(StatusCode, Json<SubmitResponse>)> {
     let access = require_project_access(&state, &actor, &project_id).await?;
     require_team_editor(access)?;
 
@@ -1005,10 +1017,17 @@ async fn submit_project(
 
     let mut tx = db::begin_immediate(&state.pool).await?;
     if let Some(key) = &idem_key
-        && let idempotency::Lookup::Replay(status, stored) =
-            idempotency::lookup(&mut tx, &actor.user_id, &route, key, &request_hash).await?
+        && let Some((status, stored)) = idempotency::replay::<SubmitResponse>(
+            &mut tx,
+            &actor.user_id,
+            &route,
+            key,
+            &request_hash,
+        )
+        .await?
     {
-        return Ok(replay_response(status, stored));
+        let status = StatusCode::from_u16(status).map_err(AppError::internal)?;
+        return Ok((status, Json(stored)));
     }
 
     let row = load_project_row(&mut *tx, &project_id).await?;
@@ -1184,7 +1203,6 @@ async fn submit_project(
         status: to.to_string(),
         version,
     };
-    let body = serde_json::to_string(&response).map_err(AppError::internal)?;
     if let Some(key) = &idem_key {
         idempotency::store(
             &mut tx,
@@ -1193,12 +1211,12 @@ async fn submit_project(
             key,
             &request_hash,
             200,
-            &body,
+            &response,
         )
         .await?;
     }
     tx.commit().await?;
-    Ok(replay_response(200, body))
+    Ok((StatusCode::OK, Json(response)))
 }
 
 // ---------------------------------------------------------------------------

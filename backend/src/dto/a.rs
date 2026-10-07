@@ -162,19 +162,6 @@ pub struct SiteDto {
     pub created_at: String,
 }
 
-/// The most urgent open item for the viewer (§5 `primary_message`).
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../frontend/src/api/generated/")]
-pub struct PrimaryMessageDto {
-    pub text: String,
-    /// Set when the item is a conversation action item.
-    pub action_item_id: Option<String>,
-    pub thread_id: Option<String>,
-    /// Set when the item is a pending review invitation (expert viewers).
-    pub review_id: Option<String>,
-    pub created_at: String,
-}
-
 /// Per-tab counters for the project workspace navigation.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../frontend/src/api/generated/")]
@@ -211,16 +198,6 @@ pub struct ApplicationSectionDto {
     pub team: Vec<TeamMemberDto>,
     pub sites: Vec<SiteDto>,
     pub counts: WorkspaceCountsDto,
-}
-
-/// `GET /projects/{id}` — the workspace payload: the project itself, the
-/// viewer's most urgent item, and one top-level field per slice section.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../frontend/src/api/generated/")]
-pub struct ProjectWorkspaceDto {
-    pub project: crate::dto::ProjectDto,
-    pub primary_message: Option<PrimaryMessageDto>,
-    pub application: ApplicationSectionDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -669,10 +646,8 @@ export_all!(
     UpgradeTemplateResponse,
     TeamMemberDto,
     SiteDto,
-    PrimaryMessageDto,
     WorkspaceCountsDto,
     ApplicationSectionDto,
-    ProjectWorkspaceDto,
     RevisionDto,
     DiffEntryDto,
     RevisionDiffDto,

@@ -2,6 +2,7 @@ pub mod audit;
 pub mod authz;
 pub mod config;
 pub mod db;
+pub mod deliverables;
 pub mod dto;
 pub mod error;
 pub mod files;

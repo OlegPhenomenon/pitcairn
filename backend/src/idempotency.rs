@@ -66,25 +66,17 @@ where
     Ok((status, response))
 }
 
-/// Result of [`lookup`]: how to proceed for an `Idempotency-Key` request.
-pub enum Lookup {
-    /// No stored key — run the effect, then call [`store`].
-    Fresh,
-    /// Same key + same request hash — replay the stored response verbatim
-    /// (status, body JSON string) without running the effect.
-    Replay(u16, String),
-}
-
-/// Check `idempotency_keys` inside `tx`. Call after `begin_immediate`, before
-/// running the effect. Errors: 422 `idempotency_key_reused` when the key was
-/// used with a different request body.
-pub async fn lookup(
+/// Split form of [`run`] for effects that must write on the caller's
+/// transaction (`run`'s `FnOnce() -> Future` cannot borrow it). Call
+/// `replay` first: `Some` → return the stored response; `None` → perform the
+/// effect on `tx`, then `store` its response in the same transaction.
+pub async fn replay<T: DeserializeOwned>(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     user_id: &str,
     route: &str,
     key: &str,
     request_hash: &str,
-) -> AppResult<Lookup> {
+) -> AppResult<Option<(u16, T)>> {
     let existing: Option<(String, i64, String)> = sqlx::query_as(
         "SELECT request_hash, response_status, response_json FROM idempotency_keys
          WHERE user_id = ? AND route = ? AND key = ?",
@@ -94,30 +86,31 @@ pub async fn lookup(
     .bind(key)
     .fetch_optional(&mut **tx)
     .await?;
-
     match existing {
+        None => Ok(None),
         Some((stored_hash, status, body)) if stored_hash == request_hash => {
-            Ok(Lookup::Replay(status as u16, body))
+            let parsed: T = serde_json::from_str(&body).map_err(AppError::internal)?;
+            Ok(Some((status as u16, parsed)))
         }
         Some(_) => Err(AppError::unprocessable(
             "idempotency_key_reused",
             "Idempotency-Key was already used with a different request body",
         )),
-        None => Ok(Lookup::Fresh),
     }
 }
 
-/// Persist the effect's response under the key, inside the same transaction
-/// as the effect itself.
-pub async fn store(
+/// Persist the response of an effect performed after [`replay`] returned `None`.
+#[allow(clippy::too_many_arguments)]
+pub async fn store<T: Serialize>(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     user_id: &str,
     route: &str,
     key: &str,
     request_hash: &str,
     status: u16,
-    body: &str,
+    response: &T,
 ) -> AppResult<()> {
+    let body = serde_json::to_string(response).map_err(AppError::internal)?;
     sqlx::query(
         "INSERT INTO idempotency_keys (user_id, route, key, request_hash, response_status, response_json, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -127,7 +120,7 @@ pub async fn store(
     .bind(key)
     .bind(request_hash)
     .bind(status as i64)
-    .bind(body)
+    .bind(&body)
     .bind(crate::util::now_rfc3339())
     .execute(&mut **tx)
     .await?;

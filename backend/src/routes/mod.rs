@@ -11,14 +11,19 @@ pub mod auth;
 pub mod change_requests;
 pub mod conversation;
 pub mod decisions;
+pub mod deliverables;
 pub mod demo;
 pub mod documents;
+pub mod money;
 pub mod notifications;
 pub mod projects;
+pub mod public;
+pub mod resources;
 pub mod reviews;
 pub mod sites;
 pub mod team;
 pub mod templates;
+pub mod trips;
 pub mod uploads;
 
 pub fn api_router(state: AppState) -> Router<AppState> {
@@ -35,6 +40,11 @@ pub fn api_router(state: AppState) -> Router<AppState> {
         .merge(change_requests::router())
         .merge(documents::router())
         .merge(notifications::router())
+        .merge(deliverables::router())
+        .merge(public::router())
+        .merge(resources::router())
+        .merge(trips::router())
+        .merge(money::router())
         .merge(admin::router(state.clone()))
         .merge(demo::router(state.clone()))
 }
