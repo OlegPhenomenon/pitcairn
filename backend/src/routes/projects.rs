@@ -79,6 +79,8 @@ async fn load_project_dto(
     .fetch_one(&state.pool)
     .await?;
     let access = authz::project_access(&state.pool, actor, project_id).await?;
+    let (trips, invoices) =
+        super::trips::workspace_section(&state.pool, actor, project_id, access).await?;
     Ok(ProjectDto {
         id: row.id,
         reference: row.reference,
@@ -95,6 +97,8 @@ async fn load_project_dto(
         created_by: row.created_by,
         created_at: row.created_at,
         my_access: access_str(access).into(),
+        trips,
+        invoices,
     })
 }
 

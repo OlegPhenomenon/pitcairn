@@ -10,8 +10,11 @@ pub mod admin;
 pub mod auth;
 pub mod demo;
 pub mod documents;
+pub mod money;
 pub mod notifications;
 pub mod projects;
+pub mod resources;
+pub mod trips;
 pub mod uploads;
 
 pub fn api_router(state: AppState) -> Router<AppState> {
@@ -21,6 +24,9 @@ pub fn api_router(state: AppState) -> Router<AppState> {
         .merge(projects::router())
         .merge(documents::router())
         .merge(notifications::router())
+        .merge(resources::router())
+        .merge(trips::router())
+        .merge(money::router())
         .merge(admin::router(state.clone()))
         .merge(demo::router(state.clone()))
 }

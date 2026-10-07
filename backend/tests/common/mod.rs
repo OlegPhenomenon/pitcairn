@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod b;
+
 use std::sync::Arc;
 
 use reqwest::header::{HeaderMap, HeaderValue};

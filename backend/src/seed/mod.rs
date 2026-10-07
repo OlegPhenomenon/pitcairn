@@ -3,6 +3,8 @@
 //! Later slices extend this module with more domain data (resources, tariffs,
 //! historic projects).
 
+pub mod resources;
+
 use serde_json::json;
 use sqlx::SqlitePool;
 
@@ -461,5 +463,6 @@ pub async fn seed_demo(pool: &SqlitePool) -> AppResult<()> {
         }
     }
 
+    resources::seed_resources(pool).await?;
     Ok(())
 }
