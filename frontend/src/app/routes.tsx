@@ -9,6 +9,11 @@ import { dashboardRoutes } from '../features/dashboard/routes';
 import { projectRoutes } from '../features/projects/routes';
 import { adminRoutes } from '../features/admin/routes';
 import { demoRoutes } from '../features/demo/routes';
+import { calendarRoutes } from '../features/calendar/routes';
+import { providerRoutes } from '../features/provider/routes';
+import { financeRoutes } from '../features/finance/routes';
+import { bankRoutes } from '../features/bank/routes';
+import { resourceRoutes } from '../features/resources/routes';
 
 export const router = createBrowserRouter([
   { path: '/', element: <LandingPage />, errorElement: <ErrorPage /> },
@@ -21,6 +26,11 @@ export const router = createBrowserRouter([
       ...projectRoutes,
       ...adminRoutes,
       ...demoRoutes,
+      ...calendarRoutes,
+      ...providerRoutes,
+      ...financeRoutes,
+      ...bankRoutes,
+      ...resourceRoutes,
     ],
   },
   { path: '*', element: <NotFoundPage /> },

@@ -33,3 +33,14 @@ reqwest = { version = "0.12", features = ["json", "cookies"] }
 tempfile = "3"
 sha2 = "0.10"
 hex = "0.4"
+
+# Keep target/ small: no debug info for dependencies, line tables only for our crate.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.release]
+strip = true
+lto = "thin"
