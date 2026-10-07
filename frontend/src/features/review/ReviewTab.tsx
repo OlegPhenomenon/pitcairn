@@ -9,8 +9,9 @@ import type { ReviewAssignmentDto } from '../../api/generated/ReviewAssignmentDt
 import type { DeclineRequest } from '../../api/generated/DeclineRequest';
 import type { SubmitOpinionRequest } from '../../api/generated/SubmitOpinionRequest';
 import { Banner, Button, Card, CardBody, CardHeader, FormField, Input, Select, StatusBadge, Textarea, useToast } from '../../ui';
-import { useProjectContext } from '../projects/ProjectLayout';
-import { DateText, QueryState, usePermissions } from '../application/shared';
+import { useProjectContext } from '../projects/projectContext';
+import { DateText, QueryState } from '../application/shared';
+import { usePermissions } from '../application/permissions';
 
 export function ReviewTab() {
   const { project, me } = useProjectContext(); const rights = usePermissions(); const query = useQueryClient(); const toast = useToast();

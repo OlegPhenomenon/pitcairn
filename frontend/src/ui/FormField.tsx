@@ -1,7 +1,5 @@
 import {
-  createContext,
   forwardRef,
-  useContext,
   useId,
   type ForwardedRef,
   type InputHTMLAttributes,
@@ -22,21 +20,7 @@ import { cx } from '../lib/cx';
  *   </FormField>
  */
 
-interface FieldCtx {
-  id: string;
-  describedBy: string | undefined;
-  invalid: boolean;
-}
-
-const FieldContext = createContext<FieldCtx>({
-  id: '',
-  describedBy: undefined,
-  invalid: false,
-});
-
-export function useFieldIds() {
-  return useContext(FieldContext);
-}
+import { FieldContext, useFieldIds } from './fieldContext';
 
 export interface FormFieldProps {
   label: ReactNode;

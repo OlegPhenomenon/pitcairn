@@ -7,10 +7,12 @@ export function AuthShell({
   title,
   subtitle,
   children,
+  wide = false,
 }: {
   title: string;
   subtitle?: ReactNode;
   children: ReactNode;
+  wide?: boolean;
 }) {
   return (
     <div className="flex min-h-dvh flex-col bg-sand-100">
@@ -29,7 +31,7 @@ export function AuthShell({
         </div>
       </header>
       <main id="main" className="flex flex-1 items-start justify-center px-4 py-10">
-        <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+        <div className={`w-full rounded-lg border border-slate-200 bg-white p-6 shadow-sm ${wide ? 'max-w-4xl' : 'max-w-md'}`}>
           <h1 className="text-xl font-bold text-navy-900">{title}</h1>
           {subtitle && <p className="mt-1 text-sm text-slate-600">{subtitle}</p>}
           <div className="mt-5">{children}</div>

@@ -20,7 +20,7 @@ import {
 } from "../../ui";
 import { useMe } from "../auth/api";
 import { useConfirmBooking, useDeclineBooking } from "../trips/api";
-import { DateText, dateRange } from "../resources/display";
+import { DateText, DateRange } from "../resources/display";
 import { CapacityCell } from "./CapacityCell";
 
 const monthBounds = (month: string) => {
@@ -229,7 +229,7 @@ export function CalendarPage() {
                   {b.resource} · {b.project_reference ?? b.project_title}
                 </p>
                 <p className="text-sm text-slate-600">
-                  {dateRange(b.start_date, b.end_date)} · {toNum(b.quantity)}{" "}
+                  <DateRange start={b.start_date} end={b.end_date} /> · {toNum(b.quantity)}{" "}
                   requested
                 </p>
                 <StatusBadge status={b.status} />

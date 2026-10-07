@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { MapContainer, TileLayer, Marker, Polygon, useMapEvents } from 'react-leaflet';
+import '../../lib/leafletIcons';
 import type { LatLngExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { apiDelete, apiPatch, apiPost, fieldError, useApiQuery } from '../../api/client';
@@ -9,8 +10,9 @@ import type { SiteDto } from '../../api/generated/SiteDto';
 import type { SiteRequest } from '../../api/generated/SiteRequest';
 import type { PatchSiteRequest } from '../../api/generated/PatchSiteRequest';
 import { Banner, Button, Card, CardBody, CardHeader, Checkbox, Dialog, FormField, Input, StatusBadge, useToast } from '../../ui';
-import { useProjectContext } from '../projects/ProjectLayout';
-import { QueryState, usePermissions } from '../application/shared';
+import { useProjectContext } from '../projects/projectContext';
+import { QueryState } from '../application/shared';
+import { usePermissions } from '../application/permissions';
 
 const centre: LatLngExpression = [-25.066, -130.100];
 function ClickPoints({ onAdd, enabled }: { onAdd: (point: [number, number]) => void; enabled: boolean }) { useMapEvents({ click(e) { if (enabled) onAdd([e.latlng.lat, e.latlng.lng]); } }); return null; }

@@ -3,7 +3,7 @@ import { useApiQuery } from '../../api/client';
 import type { ListResponse } from '../../api/types';
 import type { AuditEventDto } from '../../api/generated/AuditEventDto';
 import { Card, CardBody, CardHeader, Select } from '../../ui';
-import { useProjectContext } from '../projects/ProjectLayout';
+import { useProjectContext } from '../projects/projectContext';
 import { DateText, QueryState } from '../application/shared';
 
 export function HistoryTab() {

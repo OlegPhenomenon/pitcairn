@@ -14,8 +14,9 @@ import {
   Table,
   useToast,
 } from "../../ui";
-import { useProjectContext } from "../projects/ProjectLayout";
-import { DateText, money } from "../resources/display";
+import { useProjectContext } from "../projects/projectContext";
+import { DateText } from "../resources/display";
+import { money } from '../resources/displayFormat';
 import { useInvoices, usePayTestCard } from "./api";
 export function InvoiceDetail({
   invoice,

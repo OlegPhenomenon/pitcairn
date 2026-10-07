@@ -746,6 +746,7 @@ pub struct DashboardItemDto {
     pub project_id: Option<String>,
     pub project_reference: Option<String>,
     pub due_date: Option<String>,
+    pub valid_until: Option<String>,
     pub link: String,
 }
 

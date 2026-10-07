@@ -5,7 +5,7 @@ import { apiGet } from "../../api/client";
 import type { ListResponse, ProjectListItemDto } from "../../api/types";
 import { Banner, Button, Card, CardBody, PageHeader, useToast } from "../../ui";
 import { useMe } from "../auth/api";
-import { useDemoSwitch } from "../demo/api";
+import { useDemoSwitch, usePersonas } from "../demo/api";
 const steps = [
   {
     title: "Submit the application",
@@ -73,6 +73,7 @@ const steps = [
 ];
 export function StoryPage() {
   const me = useMe(),
+    personas = usePersonas(),
     switcher = useDemoSwitch(),
     cache = useQueryClient(),
     navigate = useNavigate(),
@@ -104,7 +105,7 @@ export function StoryPage() {
       setBusy(null);
     }
   }
-  if (!me.data?.demo_mode)
+  if (!me.data?.demo_mode && !personas.isPending && !personas.isSuccess)
     return (
       <Banner tone="error">The story guide is available in demo mode.</Banner>
     );

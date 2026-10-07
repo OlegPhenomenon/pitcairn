@@ -2,7 +2,8 @@ import { Link } from 'react-router';
 import { Anchor, FlaskConical, Landmark, MapPin, Users } from 'lucide-react';
 import { MapContainer, Marker, Popup, TileLayer } from 'react-leaflet';
 
-import { Button } from '../../ui';
+import { ButtonLink } from '../../ui';
+import '../../lib/leafletIcons';
 import { useMe } from '../auth/api';
 import { usePersonas } from '../demo/api';
 
@@ -113,26 +114,11 @@ export function LandingPage() {
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 {demo && (
-                  <Button
-                    size="md"
-                    onClick={() => {
-                      document
-                        .getElementById('demo-cta')
-                        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    }}
-                  >
-                    Try the demo
-                  </Button>
+                  <ButtonLink to="/demo">Try the demo</ButtonLink>
                 )}
-                <Link to="/catalog">
-                  <Button variant="secondary">Browse the catalog</Button>
-                </Link>
+                <ButtonLink to="/catalog" variant="secondary">Browse the catalog</ButtonLink>
                 {!loggedIn && (
-                  <Link to="/register">
-                    <Button variant="ghost" className="text-sand-100 hover:bg-navy-800">
-                      Create an account
-                    </Button>
-                  </Link>
+                  <ButtonLink to="/register" variant="outlineLight">Create an account</ButtonLink>
                 )}
               </div>
             </div>
@@ -207,18 +193,14 @@ export function LandingPage() {
                 Try the demo
               </h2>
               <p className="mt-2 max-w-2xl text-sm text-teal-900">
-                This install runs in demo mode with fictional people and data. Log in and
-                use the <strong>persona switcher</strong> in the header to step into each
+                This install runs in demo mode with fictional people and data. Choose a persona to step into each
                 role — a researcher (Anna), the coordinator (Maria), the expert (James), the
                 decision maker (Helen), the base manager (Sam), finance (Ruth), a boat
                 provider (David) and the site admin. Every action is real; mail, payments
                 and antivirus are simulated.
               </p>
               <div className="mt-4">
-                <Link to="/app/demo/story" className="mr-3 text-sm font-semibold text-teal-800 underline">Open the story guide</Link>
-                <Link to="/login">
-                  <Button>Log in and pick a persona</Button>
-                </Link>
+                <ButtonLink to="/demo">Choose a demo persona</ButtonLink>
               </div>
             </div>
           </section>

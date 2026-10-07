@@ -19,7 +19,8 @@ import {
   useToast,
 } from "../../ui";
 import { useMe } from "../auth/api";
-import { DateText, money } from "./display";
+import { DateText } from "./display";
+import { money } from './displayFormat';
 import {
   useCreateResource,
   usePatchResource,

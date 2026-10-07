@@ -5,9 +5,10 @@ import { useQueryClient } from '@tanstack/react-query';
 import { fieldError } from '../../api/client';
 import { Button, Banner, FormField, Input } from '../../ui';
 import { useLogin } from './api';
-import { safeNext } from './guards';
+import { safeNext } from './guardUtils';
 import { AuthShell } from './AuthShell';
 import { usePersonas } from '../demo/api';
+import { PersonaPicker } from '../demo/PersonaPicker';
 
 export function LoginPage() {
   const [params] = useSearchParams();
@@ -41,17 +42,13 @@ export function LoginPage() {
 
   return (
     <AuthShell
+      wide={personas.isSuccess}
       title="Log in"
       subtitle="Sign in with your email and password. Staff and reviewers will also need their authenticator code."
     >
-      {personas.isSuccess && (
-        <Banner tone="demo" className="mb-4">
-          Demo accounts: pick any persona with password{' '}
-          <code className="font-mono font-semibold">demo-pass-2026</code> — or use the
-          persona switcher after logging in as anyone.
-        </Banner>
-      )}
-      <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
+      {personas.isSuccess && <div className="mb-6 border-b border-slate-200 pb-6"><PersonaPicker next={next} /></div>}
+      {personas.isSuccess && <h2 className="mb-3 font-semibold text-navy-900">Or log in with a password</h2>}
+      <form onSubmit={onSubmit} className="flex max-w-md flex-col gap-4" noValidate>
         {err && !err.fields && (
           <Banner tone="error">{err.message}</Banner>
         )}

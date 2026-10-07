@@ -1,7 +1,6 @@
-import { Link, Outlet, useOutletContext, useParams } from 'react-router';
+import { Link, Outlet, useParams } from 'react-router';
 
 import { ApiError } from '../../api/client';
-import type { MeResponse, ProjectWorkspaceDto } from '../../api/types';
 import {
   Banner,
   Card,
@@ -13,6 +12,7 @@ import {
 } from '../../ui';
 import { useMe } from '../auth/api';
 import { useProject } from './api';
+import type { ProjectContext } from './projectContext';
 
 // Tabs from architecture §10. Only overview has real data in this slice;
 // the rest render a neutral placeholder the later slices replace.
@@ -92,14 +92,4 @@ export function ProjectLayout() {
       </div>
     </>
   );
-}
-
-interface ProjectContext {
-  workspace: ProjectWorkspaceDto;
-  project: ProjectWorkspaceDto['project'];
-  me: MeResponse | undefined;
-}
-
-export function useProjectContext(): ProjectContext {
-  return useOutletContext<ProjectContext>();
 }

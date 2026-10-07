@@ -21,9 +21,10 @@ import {
   StatusBadge,
   useToast,
 } from "../../ui";
-import { useProjectContext } from "../projects/ProjectLayout";
+import { useProjectContext } from "../projects/projectContext";
 import { useResources } from "../resources/api";
-import { dateRange, DateText, money } from "../resources/display";
+import { DateRange, DateText } from "../resources/display";
+import { money } from '../resources/displayFormat';
 import {
   useCancelBooking,
   useCancelTrip,
@@ -150,7 +151,7 @@ export function TripsTab() {
                 <div>
                   <h3 className="text-lg font-semibold">{trip.title}</h3>
                   <p className="text-sm text-slate-600">
-                    {dateRange(trip.arrive_date, trip.depart_date)} ·{" "}
+                    <DateRange start={trip.arrive_date} end={trip.depart_date} /> ·{" "}
                     {trip.participants.length} participant
                     {trip.participants.length === 1 ? "" : "s"}
                   </p>
@@ -171,7 +172,7 @@ export function TripsTab() {
                     >
                       <div>
                         <strong>{b.resource_name}</strong> · {toNum(b.quantity)}{" "}
-                        · {dateRange(b.start_date, b.end_date)}{" "}
+                        · <DateRange start={b.start_date} end={b.end_date} />{" "}
                         <StatusBadge status={b.status} />
                         {b.decline_reason && (
                           <p className="text-red-700">

@@ -5,7 +5,7 @@ import type { RevisionDto } from '../../api/generated/RevisionDto';
 import type { RevisionDiffDto } from '../../api/generated/RevisionDiffDto';
 import { Banner, Card, CardBody, CardHeader, Select, StatusBadge } from '../../ui';
 import { toNum } from '../../lib/format';
-import { useProjectContext } from '../projects/ProjectLayout';
+import { useProjectContext } from '../projects/projectContext';
 import { DateText, QueryState } from './shared';
 import { answerToText } from './schema';
 

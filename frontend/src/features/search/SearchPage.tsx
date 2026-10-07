@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import { MapContainer, TileLayer, useMap } from "react-leaflet";
+import '../../lib/leafletIcons';
 import { listQuery, useApiQuery } from "../../api/client";
 import type { ListResponse, SearchProjectItemDto } from "../../api/types";
 import { formatDate, toNum } from "../../lib/format";

@@ -7,7 +7,7 @@ import {
 } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
-import { useToast } from '../ui/Toast';
+import { useToast } from '../ui/toastContext';
 
 const API_BASE = '/api/v1';
 const CSRF_HEADER = 'X-Pitcairn-Csrf';
@@ -84,7 +84,7 @@ export function setAuthRedirect(fn: RedirectFn) {
 }
 
 /** Routes where a session-expired redirect must never trigger (they are public or auth pages). */
-const PUBLIC_PREFIXES = ['/login', '/register', '/mfa', '/invite', '/catalog'];
+const PUBLIC_PREFIXES = ['/login', '/demo', '/register', '/mfa', '/invite', '/catalog'];
 
 function currentPath(): string {
   try {
