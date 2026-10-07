@@ -190,7 +190,7 @@ test('new team completes the application, permit, booking, payment, and publicat
     await expect(staff.getByText('Decision draft saved')).toBeVisible();
     await staff.getByRole('button', { name: 'Issue decision' }).first().click();
     await staff.getByRole('dialog', { name: 'Issue decision' }).getByRole('button', { name: 'Issue decision' }).click();
-    await expect(staff.getByRole('heading', { name: 'Current decision: permit' })).toBeVisible();
+    await expect(staff.getByRole('heading', { name: 'Current decision: Research permit' })).toBeVisible();
     await visit(researcher, projectId);
     await expect(researcher.getByText(`Conditions: ${condition}`)).toBeVisible();
 
