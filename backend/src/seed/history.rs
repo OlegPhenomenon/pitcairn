@@ -62,7 +62,7 @@ const EXTRA_USERS: &[(&str, &str, &str, &str)] = &[
 const LEGACY_CSV: &str = "\
 reference,title,organisation,lead_name,lead_email,start_date,end_date,summary,keywords,site_name,lat,lng,report_title,report_url
 MSB-2016-004,Pitcairn rock lobster abundance,Southern Reef Fisheries Trust (fictional),Dr Grace Holloway,g.holloway@legacy.example.invalid,2016-04-04,2016-05-13,\"Pot survey of rock lobster abundance along the north coast (fictional legacy record).\",\"rock lobster, fisheries, pot survey\",Youngs Rock,-25.0575,-130.1128,Rock lobster abundance report 2016,https://archive.example.org/msb/lobster-2016.pdf
-MSB-2017-009,Henderson Island beach plastics audit,Clean Ocean Futures (fictional),Dr Malik Rahman,m.rahman@legacy.example.invalid,2017-06-05,2017-06-30,\"Transect counts of beached plastic debris on Henderson East Beach (fictional legacy record).\",\"plastics, debris, beaches\",Henderson East Beach,-24.3683,-128.2986,Henderson beach plastics audit,https://archive.example.org/msb/plastics-2017
+MSB-2017-009,Henderson Island beach plastics survey,Clean Ocean Futures (fictional),Dr Malik Rahman,m.rahman@legacy.example.invalid,2017-06-05,2017-06-30,\"Transect counts of beached plastic debris on Henderson East Beach (fictional legacy record).\",\"plastics, debris, beaches\",Henderson East Beach,-24.3683,-128.2986,Henderson beach plastics report,https://archive.example.org/msb/plastics-2017
 MSB-2019-002,Oeno Island coral bleaching snapshot,Atoll Reef Watch (fictional),Dr Isla Brennan,i.brennan@legacy.example.invalid,2019-03-11,2019-03-29,\"Rapid bleaching survey after the 2019 marine heatwave (fictional legacy record).\",\"coral, bleaching, heatwave\",Oeno lagoon,-23.9239,-130.7342,,
 MSB-2020-006,Pitcairn freshwater spring chemistry,Island Hydrology Group (fictional),Dr Paulo Sefo,p.sefo@legacy.example.invalid,2020-01-13,2020-02-07,\"Major-ion chemistry of the island's springs and catchments (fictional legacy record).\",\"hydrology, springs, water chemistry\",Middle Hill,-25.0740,-130.1018,Spring chemistry data summary,https://archive.example.org/msb/springs-2020
 ";
@@ -1015,7 +1015,8 @@ async fn action_item(
 }
 
 // ---------------------------------------------------------------------------
-// Resources (find-or-create, so other seeds' resources are reused)
+// Resources: the MSB resources and tariffs seeded by `seed::resources`
+// (called before this module), looked up by name — never duplicated.
 // ---------------------------------------------------------------------------
 
 struct Resources {
@@ -1027,137 +1028,25 @@ struct Resources {
 
 impl Resources {
     async fn ensure(ctx: &Ctx) -> AppResult<Resources> {
-        let admin = ctx.id("admin").to_string();
-        let david = ctx.id("david").to_string();
         Ok(Resources {
-            room: resource(
-                ctx,
-                "room",
-                "Base guest room",
-                "Twin room in the Marine Science Base accommodation block.",
-                4,
-                "room",
-                None,
-                "per_night",
-                8_500,
-                &admin,
-            )
-            .await?,
-            lab: resource(
-                ctx,
-                "lab",
-                "Wet lab bench",
-                "Bench with seawater supply in the base wet lab.",
-                2,
-                "bench",
-                None,
-                "per_day",
-                4_000,
-                &admin,
-            )
-            .await?,
-            equipment: resource(
-                ctx,
-                "equipment",
-                "Dive compressor",
-                "Portable dive air compressor with filter service.",
-                1,
-                "unit",
-                None,
-                "per_day",
-                6_000,
-                &admin,
-            )
-            .await?,
-            boat: resource(
-                ctx,
-                "boat",
-                "Bounty Bay longboat charter",
-                "Aluminium longboat with islander skipper (Bounty Bay Boat Hire).",
-                1,
-                "boat",
-                Some(&david),
-                "per_day",
-                45_000,
-                &admin,
-            )
-            .await?,
+            room: resource(ctx, "MSB twin bedroom").await?,
+            lab: resource(ctx, "MSB wet laboratory").await?,
+            equipment: resource(ctx, "Dive compressor").await?,
+            boat: resource(ctx, "Boat charter — Bounty Bay Boat Hire (fictional)").await?,
         })
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn resource(
-    ctx: &Ctx,
-    kind: &str,
-    name: &str,
-    description: &str,
-    quantity: i64,
-    unit_label: &str,
-    provider: Option<&str>,
-    tariff_unit: &str,
-    price_cents: i64,
-    admin: &str,
-) -> AppResult<String> {
-    let existing: Option<String> = match provider {
-        Some(p) => {
-            sqlx::query_scalar(
-                "SELECT id FROM resources WHERE kind = ? AND provider_user_id = ? AND active = 1
-                 ORDER BY created_at LIMIT 1",
-            )
-            .bind(kind)
-            .bind(p)
-            .fetch_optional(&ctx.pool)
-            .await?
-        }
-        None => sqlx::query_scalar(
-            "SELECT id FROM resources WHERE kind = ? AND provider_user_id IS NULL AND active = 1
-                 ORDER BY created_at LIMIT 1",
-        )
-        .bind(kind)
+async fn resource(ctx: &Ctx, name: &str) -> AppResult<String> {
+    sqlx::query_scalar("SELECT id FROM resources WHERE name = ?")
+        .bind(name)
         .fetch_optional(&ctx.pool)
-        .await?,
-    };
-    let id = match existing {
-        Some(id) => id,
-        None => {
-            let id = new_id();
-            sqlx::query(
-                "INSERT INTO resources (id, kind, name, description, quantity, unit_label, provider_user_id, active, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
-            )
-            .bind(&id)
-            .bind(kind)
-            .bind(name)
-            .bind(description)
-            .bind(quantity)
-            .bind(unit_label)
-            .bind(provider)
-            .bind(crate::util::now_rfc3339())
-            .execute(&ctx.pool)
-            .await?;
-            id
-        }
-    };
-    let has_tariff: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tariffs WHERE resource_id = ?")
-        .bind(&id)
-        .fetch_one(&ctx.pool)
-        .await?;
-    if has_tariff == 0 {
-        sqlx::query(
-            "INSERT INTO tariffs (id, resource_id, unit, price_cents, currency, effective_from, created_by, created_at)
-             VALUES (?, ?, ?, ?, 'NZD', '2020-01-01', ?, ?)",
-        )
-        .bind(new_id())
-        .bind(&id)
-        .bind(tariff_unit)
-        .bind(price_cents)
-        .bind(admin)
-        .bind(crate::util::now_rfc3339())
-        .execute(&ctx.pool)
-        .await?;
-    }
-    Ok(id)
+        .await?
+        .ok_or_else(|| {
+            AppError::internal(format!(
+                "seeded resource '{name}' missing (seed::resources must run first)"
+            ))
+        })
 }
 
 /// Snapshot price for an invoice line: latest tariff effective on `on`.

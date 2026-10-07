@@ -4,6 +4,7 @@
 //! historic projects).
 
 pub mod history;
+pub mod resources;
 
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -463,6 +464,7 @@ pub async fn seed_demo(pool: &SqlitePool) -> AppResult<()> {
         }
     }
 
+    resources::seed_resources(pool).await?;
     history::seed(pool, &password_hash).await?;
     Ok(())
 }

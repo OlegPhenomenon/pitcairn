@@ -5,6 +5,7 @@ pub mod authz;
 pub mod backup;
 pub mod config;
 pub mod db;
+pub mod deliverables;
 pub mod dto;
 pub mod error;
 pub mod files;

@@ -65,3 +65,64 @@ where
     .await?;
     Ok((status, response))
 }
+
+/// Split form of [`run`] for effects that must write on the caller's
+/// transaction (`run`'s `FnOnce() -> Future` cannot borrow it). Call
+/// `replay` first: `Some` → return the stored response; `None` → perform the
+/// effect on `tx`, then `store` its response in the same transaction.
+pub async fn replay<T: DeserializeOwned>(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    user_id: &str,
+    route: &str,
+    key: &str,
+    request_hash: &str,
+) -> AppResult<Option<(u16, T)>> {
+    let existing: Option<(String, i64, String)> = sqlx::query_as(
+        "SELECT request_hash, response_status, response_json FROM idempotency_keys
+         WHERE user_id = ? AND route = ? AND key = ?",
+    )
+    .bind(user_id)
+    .bind(route)
+    .bind(key)
+    .fetch_optional(&mut **tx)
+    .await?;
+    match existing {
+        None => Ok(None),
+        Some((stored_hash, status, body)) if stored_hash == request_hash => {
+            let parsed: T = serde_json::from_str(&body).map_err(AppError::internal)?;
+            Ok(Some((status as u16, parsed)))
+        }
+        Some(_) => Err(AppError::unprocessable(
+            "idempotency_key_reused",
+            "Idempotency-Key was already used with a different request body",
+        )),
+    }
+}
+
+/// Persist the response of an effect performed after [`replay`] returned `None`.
+#[allow(clippy::too_many_arguments)]
+pub async fn store<T: Serialize>(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    user_id: &str,
+    route: &str,
+    key: &str,
+    request_hash: &str,
+    status: u16,
+    response: &T,
+) -> AppResult<()> {
+    let body = serde_json::to_string(response).map_err(AppError::internal)?;
+    sqlx::query(
+        "INSERT INTO idempotency_keys (user_id, route, key, request_hash, response_status, response_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(user_id)
+    .bind(route)
+    .bind(key)
+    .bind(request_hash)
+    .bind(status as i64)
+    .bind(&body)
+    .bind(crate::util::now_rfc3339())
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}

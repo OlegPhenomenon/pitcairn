@@ -59,7 +59,7 @@ async fn search_by_q_org_year_bbox_and_overdue() {
     let t = titles(&items);
     assert!(t.contains(&"Henderson Island seabird census"), "{t:?}");
     assert!(
-        t.contains(&"Henderson Island beach plastics audit"),
+        t.contains(&"Henderson Island beach plastics survey"),
         "{t:?}"
     );
     assert!(!t.contains(&"Coral cover transects"), "{t:?}");
@@ -68,7 +68,7 @@ async fn search_by_q_org_year_bbox_and_overdue() {
     let items = search(&maria, "bbox=-128.5,-24.5,-128.2,-24.2&status=closed").await;
     assert_eq!(
         titles(&items),
-        vec!["Henderson Island beach plastics audit"]
+        vec!["Henderson Island beach plastics survey"]
     );
 
     // Overdue filter and deliverable counts.

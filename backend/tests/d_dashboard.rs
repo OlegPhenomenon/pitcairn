@@ -113,7 +113,7 @@ async fn expert_base_manager_finance_and_provider_sections() {
     assert!(mentions(section(&d, "pending_bookings"), "Dive compressor"));
     assert!(mentions(section(&d, "arrivals"), "Reef fish biomass"));
     // Provider-owned boat requests go to the provider, not the base manager.
-    assert!(!mentions(section(&d, "pending_bookings"), "longboat"));
+    assert!(!mentions(section(&d, "pending_bookings"), "Boat charter"));
 
     let d = dashboard(&app, "ruth").await;
     assert!(!section(&d, "invoices_to_issue").is_empty());
@@ -122,7 +122,7 @@ async fn expert_base_manager_finance_and_provider_sections() {
     let d = dashboard(&app, "david").await;
     let requests = section(&d, "my_requests");
     assert_eq!(requests.len(), 1);
-    assert!(requests[0].title.contains("longboat"));
+    assert!(requests[0].title.contains("Boat charter"));
     assert!(
         requests[0].project_reference.is_none(),
         "provider gets minimal info"
