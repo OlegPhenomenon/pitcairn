@@ -67,7 +67,7 @@ export function useMfaEnrollConfirm() {
 
 export function useAcceptInvitation() {
   return useApiMutation<AcceptInvitationResponse, string>(
-    (token) => apiPost<AcceptInvitationResponse>(`/invitations/${token}`),
+    (token) => apiPost<AcceptInvitationResponse>(`/invitations/${token}/accept`),
   );
 }
 

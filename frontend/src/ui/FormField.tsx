@@ -182,7 +182,8 @@ export const Checkbox = forwardRef(function Checkbox(
   ref: ForwardedRef<HTMLInputElement>,
 ) {
   const field = useFieldIds();
-  const boxId = id ?? field.id;
+  const fallbackId = useId();
+  const boxId = (id ?? field.id) || fallbackId;
   const box = (
     <input
       ref={ref}
