@@ -227,6 +227,119 @@ pub struct ReadAllResponse {
     pub marked: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct SettingsDto {
+    pub mail_enabled: bool,
+    pub organisation_name: String,
+    pub reference_prefix: String,
+    pub public_catalog_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct AdminCreateUserRequest {
+    pub email: String,
+    pub name: String,
+    pub organisation: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct AdminPatchUserRequest {
+    pub name: Option<String>,
+    pub organisation: Option<String>,
+    pub email: Option<String>,
+    pub disabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct GrantRoleRequest {
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct JobDto {
+    pub id: String,
+    pub kind: String,
+    #[ts(type = "Record<string, unknown>")]
+    pub payload: Value,
+    pub dedupe_key: Option<String>,
+    pub status: String,
+    pub attempts: i64,
+    pub max_attempts: i64,
+    pub run_after: String,
+    pub last_error: Option<String>,
+    pub locked_until: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct AuditEventDto {
+    pub id: String,
+    pub at: String,
+    pub actor_id: Option<String>,
+    pub actor_label: String,
+    pub action: String,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub project_id: Option<String>,
+    pub visibility: String,
+    pub summary: String,
+    #[ts(type = "unknown | null")]
+    pub before: Option<Value>,
+    #[ts(type = "unknown | null")]
+    pub after: Option<Value>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct PersonaDto {
+    pub key: String,
+    pub user_id: String,
+    pub name: String,
+    pub email: String,
+    pub organisation: String,
+    pub role: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct PersonasResponse {
+    pub personas: Vec<PersonaDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct DemoSwitchRequest {
+    pub persona_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct MailMessageDto {
+    pub id: i64,
+    pub to_email: String,
+    pub subject: String,
+    pub body_text: String,
+    pub status: String,
+    pub error: Option<String>,
+    pub created_at: String,
+    pub sent_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../frontend/src/api/generated/")]
+pub struct DemoTotpResponse {
+    pub user_id: String,
+    pub code: String,
+}
+
 impl ListQuery {
     pub fn limit(&self) -> i64 {
         self.limit.unwrap_or(50).clamp(1, 200)
@@ -260,4 +373,15 @@ export_all!(
     DocumentVersionDto,
     NotificationDto,
     ReadAllResponse,
+    SettingsDto,
+    AdminCreateUserRequest,
+    AdminPatchUserRequest,
+    GrantRoleRequest,
+    JobDto,
+    AuditEventDto,
+    PersonaDto,
+    PersonasResponse,
+    DemoSwitchRequest,
+    MailMessageDto,
+    DemoTotpResponse,
 );

@@ -71,7 +71,7 @@ impl AppState {
 }
 
 pub fn build_app(state: AppState) -> axum::Router {
-    let api = routes::api_router()
+    let api = routes::api_router(state.clone())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             mfa_gate,
