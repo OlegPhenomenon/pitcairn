@@ -9,7 +9,10 @@ use crate::AppState;
 pub mod admin;
 pub mod assist;
 pub mod auth;
+pub mod change_requests;
+pub mod conversation;
 pub mod dashboard;
+pub mod decisions;
 pub mod deliverables;
 pub mod demo;
 pub mod documents;
@@ -19,7 +22,11 @@ pub mod notifications;
 pub mod projects;
 pub mod public;
 pub mod resources;
+pub mod reviews;
 pub mod search;
+pub mod sites;
+pub mod team;
+pub mod templates;
 pub mod trips;
 pub mod uploads;
 
@@ -28,6 +35,13 @@ pub fn api_router(state: AppState) -> Router<AppState> {
         .merge(auth::router())
         .merge(uploads::router())
         .merge(projects::router())
+        .merge(templates::router())
+        .merge(team::router())
+        .merge(sites::router())
+        .merge(conversation::router())
+        .merge(reviews::router())
+        .merge(decisions::router())
+        .merge(change_requests::router())
         .merge(documents::router())
         .merge(notifications::router())
         .merge(deliverables::router())

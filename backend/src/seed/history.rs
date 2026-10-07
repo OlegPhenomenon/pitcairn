@@ -466,6 +466,7 @@ fn person(name: &str, role: &str, gender: &str, age: i64) -> Value {
 
 /// Insert a revision whose snapshot is built from the project's current rows
 /// (self-contained, like a real submit).
+#[allow(clippy::type_complexity)]
 async fn revision(
     tx: &mut Tx<'_>,
     project_id: &str,
@@ -473,8 +474,10 @@ async fn revision(
     submitted_by: &str,
     at: &str,
 ) -> AppResult<String> {
+    // Same shape as `routes::projects::build_snapshot` (slice A).
     #[allow(clippy::type_complexity)]
-    let (title, summary, keywords, organisation, start, end, answers, tv): (
+    let (reference, title, summary, keywords, organisation, start, end, answers, tv, tv_number): (
+        Option<String>,
         String,
         String,
         String,
@@ -483,54 +486,49 @@ async fn revision(
         Option<String>,
         String,
         String,
+        i64,
     ) = sqlx::query_as(
-        "SELECT title, summary, keywords, organisation, start_date, end_date, answers_json,
-                template_version_id FROM projects WHERE id = ?",
+        "SELECT p.reference, p.title, p.summary, p.keywords, p.organisation, p.start_date,
+                p.end_date, p.answers_json, p.template_version_id, tv.version
+         FROM projects p JOIN template_versions tv ON tv.id = p.template_version_id
+         WHERE p.id = ?",
     )
     .bind(project_id)
     .fetch_one(&mut **tx)
     .await?;
-    let team: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT u.id, u.name, pm.role FROM project_members pm JOIN users u ON u.id = pm.user_id
-         WHERE pm.project_id = ? AND pm.removed_at IS NULL ORDER BY pm.added_at, u.name",
-    )
-    .bind(project_id)
-    .fetch_all(&mut **tx)
-    .await?;
-    let sites: Vec<(String, String, String, i64)> = sqlx::query_as(
-        "SELECT id, name, geometry_json, sensitive FROM project_sites WHERE project_id = ? ORDER BY name",
-    )
-    .bind(project_id)
-    .fetch_all(&mut **tx)
-    .await?;
-    let docs: Vec<(String, Option<String>, String, String, String, String)> = sqlx::query_as(
-        "SELECT d.id, d.slot_key, d.title, d.category, dv.id, f.sha256
-         FROM documents d JOIN document_versions dv ON dv.document_id = d.id
+    let team = crate::routes::projects::team_members(&mut **tx, project_id, false).await?;
+    let sites = sites_snapshot(tx, project_id).await?;
+    let docs: Vec<(String, Option<String>, String, String, String, i64, String)> = sqlx::query_as(
+        "SELECT d.id, d.slot_key, d.title, d.category, dv.id, dv.number, f.sha256
+         FROM documents d
+         JOIN document_versions dv ON dv.document_id = d.id
+              AND dv.number = (SELECT MAX(number) FROM document_versions WHERE document_id = d.id)
          JOIN files f ON f.id = dv.file_id
-         WHERE d.project_id = ? AND d.category != 'result'
-           AND dv.number = (SELECT MAX(number) FROM document_versions WHERE document_id = d.id)
-         ORDER BY d.title",
+         WHERE d.project_id = ? AND d.category IN ('application', 'personal', 'other')
+         ORDER BY d.created_at, d.id",
     )
     .bind(project_id)
     .fetch_all(&mut **tx)
     .await?;
     let snapshot = json!({
+        "reference": reference,
         "title": title,
         "summary": summary,
         "keywords": keywords,
         "organisation": organisation,
         "start_date": start,
         "end_date": end,
+        "template_version_id": tv,
+        "template_version": tv_number,
         "answers": serde_json::from_str::<Value>(&answers).unwrap_or(json!({})),
-        "team": team.iter().map(|(id, name, role)| json!({"user_id": id, "name": name, "role": role})).collect::<Vec<_>>(),
-        "sites": sites.iter().map(|(id, name, g, s)| json!({
-            "id": id, "name": name,
-            "geometry": serde_json::from_str::<Value>(g).unwrap_or(Value::Null),
-            "sensitive": *s != 0,
+        "team": team.iter().map(|m| json!({
+            "user_id": m.user_id, "name": m.name, "email": m.email,
+            "organisation": m.organisation, "role": m.role,
         })).collect::<Vec<_>>(),
-        "documents": docs.iter().map(|(id, slot, title, cat, vid, sha)| json!({
+        "sites": sites,
+        "documents": docs.iter().map(|(id, slot, title, cat, vid, number, sha)| json!({
             "document_id": id, "slot_key": slot, "title": title, "category": cat,
-            "version_id": vid, "sha256": sha,
+            "version_id": vid, "version_number": number, "sha256": sha,
         })).collect::<Vec<_>>(),
     });
     let id = new_id();
@@ -655,26 +653,23 @@ struct NewDecision<'a> {
     at: String,
 }
 
+/// Precise site copies exactly as revisions and issued decisions store them
+/// (`routes::sites::site_snapshot_value`, slice A).
+async fn sites_snapshot(tx: &mut Tx<'_>, project_id: &str) -> AppResult<Vec<Value>> {
+    crate::routes::sites::project_sites(&mut **tx, project_id)
+        .await?
+        .iter()
+        .map(crate::routes::sites::site_snapshot_value)
+        .collect()
+}
+
 async fn decision(
     tx: &mut Tx<'_>,
     project_id: &str,
     revision_id: &str,
     d: NewDecision<'_>,
 ) -> AppResult<String> {
-    let sites: Vec<(String, String, String, i64)> = sqlx::query_as(
-        "SELECT id, name, geometry_json, sensitive FROM project_sites WHERE project_id = ? ORDER BY name",
-    )
-    .bind(project_id)
-    .fetch_all(&mut **tx)
-    .await?;
-    let snapshot: Vec<Value> = sites
-        .iter()
-        .map(|(id, name, g, s)| {
-            json!({"id": id, "name": name,
-                   "geometry": serde_json::from_str::<Value>(g).unwrap_or(Value::Null),
-                   "sensitive": *s != 0})
-        })
-        .collect();
+    let snapshot = sites_snapshot(tx, project_id).await?;
     let id = new_id();
     sqlx::query(
         "INSERT INTO decisions
