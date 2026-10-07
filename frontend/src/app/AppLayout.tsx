@@ -24,12 +24,17 @@ function navItems(me: MeResponse): NavItem[] {
   ];
   if (me.demo_mode) {
     items.push({ to: '/app/demo/mailbox', label: 'Demo mailbox', icon: <Mail className="size-4" /> });
+    if (me.user.roles.includes('finance')) items.push({ to: '/app/demo/bank', label: 'Bank simulator' });
   }
+  if (me.user.roles.some(r => ['base_manager', 'coordinator'].includes(r))) items.push({ to: '/app/calendar', label: 'Calendar' });
+  if (me.user.roles.includes('provider')) items.push({ to: '/app/provider', label: 'Provider bookings' });
+  if (me.user.roles.includes('finance')) items.push({ to: '/app/finance', label: 'Finance' });
   return items;
 }
 
 const ADMIN_ITEMS: NavItem[] = [
   { to: '/app/admin/users', label: 'Users' },
+  { to: '/app/admin/resources', label: 'Resources & tariffs' },
   { to: '/app/admin/settings', label: 'Settings' },
   { to: '/app/admin/jobs', label: 'Jobs' },
   { to: '/app/admin/audit', label: 'Audit log' },

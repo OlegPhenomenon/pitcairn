@@ -1,4 +1,5 @@
-//! Resources & tariffs (architecture §4, §5): admin manages, staff reads.
+//! Resources & tariffs (architecture §4, §5): admin manages; authenticated
+//! researchers can read the catalog to request bookings.
 //! Tariffs are append-only — a price change is a new row with a later
 //! `effective_from`; old rows are never edited so issued invoice lines stay
 //! consistent with the price in force at the booking's start date.
@@ -88,9 +89,7 @@ async fn list_resources(
     State(state): State<AppState>,
     actor: Actor,
 ) -> AppResult<Json<ListResponse<ResourceDto>>> {
-    if !actor.is_staff() {
-        return Err(AppError::forbidden("requires a staff role"));
-    }
+    let _ = actor; // Actor extractor requires an authenticated session.
     let rows: Vec<ResourceRow> =
         sqlx::query_as(&format!("{RESOURCE_SELECT} ORDER BY r.kind, r.name"))
             .fetch_all(&state.pool)
@@ -340,9 +339,7 @@ async fn list_tariffs(
     actor: Actor,
     Path(resource_id): Path<String>,
 ) -> AppResult<Json<ListResponse<TariffDto>>> {
-    if !actor.is_staff() {
-        return Err(AppError::forbidden("requires a staff role"));
-    }
+    let _ = actor; // Booking requesters need current tariff information.
     ensure_resource_exists(&state.pool, &resource_id).await?;
     let rows: Vec<TariffRow> = sqlx::query_as(
         "SELECT id, resource_id, unit, price_cents, currency, effective_from, created_by, created_at
