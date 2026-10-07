@@ -183,7 +183,8 @@ async fn execute(state: &AppState, job: &JobRow) -> AppResult<()> {
 }
 
 /// Mock antivirus (§6): rejects the EICAR test string, executables (MZ/ELF
-/// magic), and declared-vs-sniffed mime mismatches for common types.
+/// magic), and declared-vs-sniffed mime mismatches for common types. The
+/// stored file is read in bounded chunks, never whole.
 async fn scan_file(state: &AppState, file_id: &str) -> AppResult<()> {
     let row: Option<(String, String)> =
         sqlx::query_as("SELECT sha256, mime FROM files WHERE id = ?")
@@ -194,8 +195,10 @@ async fn scan_file(state: &AppState, file_id: &str) -> AppResult<()> {
         // File vanished; nothing to scan, treat as done.
         return Ok(());
     };
-    let bytes = crate::files::read_file(&state.config.data_dir, &sha256).await?;
-    let detail = scan_bytes(&bytes, &declared_mime);
+    let path = crate::files::file_path(&state.config.data_dir, &sha256)?;
+    let mut scanner = Scanner::new();
+    crate::files::for_each_chunk(&path, |chunk| scanner.update(chunk)).await?;
+    let detail = scanner.finish(&declared_mime);
     let (status, detail) = match detail {
         None => ("clean", None),
         Some(d) => ("rejected", Some(d)),
@@ -211,55 +214,128 @@ async fn scan_file(state: &AppState, file_id: &str) -> AppResult<()> {
 
 /// Returns Some(reason) when the bytes are rejected.
 pub fn scan_bytes(bytes: &[u8], declared_mime: &str) -> Option<String> {
-    const EICAR: &str = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
-    if bytes.windows(EICAR.len()).any(|w| w == EICAR.as_bytes()) {
-        return Some("EICAR antivirus test string detected".into());
-    }
-    if bytes.starts_with(b"MZ") {
-        return Some("Windows executable (MZ) not allowed".into());
-    }
-    if bytes.starts_with(b"\x7fELF") {
-        return Some("ELF executable not allowed".into());
-    }
-    let sniffed = sniff_mime(bytes);
-    if let (Some(sniffed), false) = (sniffed, bytes.is_empty()) {
-        // Compare broad type families; only reject clear mismatches.
-        let declared_family = declared_mime.split('/').next().unwrap_or("");
-        let sniffed_family = sniffed.split('/').next().unwrap_or("");
-        let exact = declared_mime == sniffed;
-        let family_ok = declared_family == sniffed_family;
-        // text/* is a superset family (csv, plain, markdown...).
-        let text_ok = sniffed == "text/plain" && declared_family == "text";
-        let zip_ok = sniffed == "application/zip"
-            && matches!(
-                declared_mime,
-                "application/zip"
-                    | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            );
-        if !exact && !family_ok && !text_ok && !zip_ok {
-            return Some(format!(
-                "declared mime '{declared_mime}' does not match sniffed '{sniffed}'"
-            ));
-        }
-    }
-    None
+    let mut scanner = Scanner::new();
+    scanner.update(bytes);
+    scanner.finish(declared_mime)
 }
 
-fn sniff_mime(bytes: &[u8]) -> Option<&'static str> {
-    if bytes.starts_with(b"%PDF") {
+const EICAR: &[u8] = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
+/// Longest magic number checked by `sniff_mime` (PNG).
+const HEAD_LEN: usize = 8;
+
+/// Incremental mock scanner: feed chunks of any size with `update`, then
+/// `finish`. Keeps O(1) state — the head (magic numbers), the last
+/// `EICAR.len() - 1` bytes (matches across chunk boundaries) and whether
+/// every byte so far is plain text.
+pub struct Scanner {
+    head: Vec<u8>,
+    tail: Vec<u8>,
+    eicar: bool,
+    all_text: bool,
+    empty: bool,
+}
+
+impl Default for Scanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Scanner {
+    pub fn new() -> Self {
+        Scanner {
+            head: Vec::with_capacity(HEAD_LEN),
+            tail: Vec::with_capacity(EICAR.len()),
+            eicar: false,
+            all_text: true,
+            empty: true,
+        }
+    }
+
+    pub fn update(&mut self, chunk: &[u8]) {
+        if chunk.is_empty() {
+            return;
+        }
+        self.empty = false;
+        if self.head.len() < HEAD_LEN {
+            let take = (HEAD_LEN - self.head.len()).min(chunk.len());
+            self.head.extend_from_slice(&chunk[..take]);
+        }
+        if self.all_text {
+            self.all_text = chunk.iter().all(|b| {
+                b.is_ascii() && (!b.is_ascii_control() || *b == b'\n' || *b == b'\r' || *b == b'\t')
+            });
+        }
+        if !self.eicar {
+            // A match straddling the previous chunk: tail + start of chunk.
+            let keep = EICAR.len() - 1;
+            let mut boundary = std::mem::take(&mut self.tail);
+            boundary.extend_from_slice(&chunk[..keep.min(chunk.len())]);
+            self.eicar = boundary.windows(EICAR.len()).any(|w| w == EICAR)
+                || chunk.windows(EICAR.len()).any(|w| w == EICAR);
+            // New tail: last `keep` bytes of (old tail + chunk).
+            if chunk.len() >= keep {
+                boundary.clear();
+                boundary.extend_from_slice(&chunk[chunk.len() - keep..]);
+            } else {
+                let excess = boundary.len().saturating_sub(keep);
+                boundary.drain(..excess);
+            }
+            self.tail = boundary;
+        }
+    }
+
+    /// Some(reason) when the scanned bytes are rejected.
+    pub fn finish(self, declared_mime: &str) -> Option<String> {
+        if self.eicar {
+            return Some("EICAR antivirus test string detected".into());
+        }
+        if self.head.starts_with(b"MZ") {
+            return Some("Windows executable (MZ) not allowed".into());
+        }
+        if self.head.starts_with(b"\x7fELF") {
+            return Some("ELF executable not allowed".into());
+        }
+        if self.empty {
+            return None;
+        }
+        if let Some(sniffed) = sniff_mime(&self.head, self.all_text) {
+            // Compare broad type families; only reject clear mismatches.
+            let declared_family = declared_mime.split('/').next().unwrap_or("");
+            let sniffed_family = sniffed.split('/').next().unwrap_or("");
+            let exact = declared_mime == sniffed;
+            let family_ok = declared_family == sniffed_family;
+            // text/* is a superset family (csv, plain, markdown...).
+            let text_ok = sniffed == "text/plain" && declared_family == "text";
+            let zip_ok = sniffed == "application/zip"
+                && matches!(
+                    declared_mime,
+                    "application/zip"
+                        | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                );
+            if !exact && !family_ok && !text_ok && !zip_ok {
+                return Some(format!(
+                    "declared mime '{declared_mime}' does not match sniffed '{sniffed}'"
+                ));
+            }
+        }
+        None
+    }
+}
+
+fn sniff_mime(head: &[u8], all_text: bool) -> Option<&'static str> {
+    if head.starts_with(b"%PDF") {
         Some("application/pdf")
-    } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+    } else if head.starts_with(b"\x89PNG\r\n\x1a\n") {
         Some("image/png")
-    } else if bytes.starts_with(b"\xff\xd8\xff") {
+    } else if head.starts_with(b"\xff\xd8\xff") {
         Some("image/jpeg")
-    } else if bytes.starts_with(b"GIF8") {
+    } else if head.starts_with(b"GIF8") {
         Some("image/gif")
-    } else if bytes.starts_with(b"PK\x03\x04") {
+    } else if head.starts_with(b"PK\x03\x04") {
         Some("application/zip")
-    } else if bytes.iter().all(|b| {
-        b.is_ascii() && (!b.is_ascii_control() || *b == b'\n' || *b == b'\r' || *b == b'\t')
-    }) {
+    } else if all_text {
         Some("text/plain")
     } else {
         None

@@ -187,7 +187,7 @@ async fn exists(ctx: &Ctx, title: &str) -> AppResult<bool> {
 /// Store bytes in content-addressed storage and return the `files.id`.
 async fn store_file(ctx: &Ctx, bytes: &[u8], mime: &str, uploaded_by: &str) -> AppResult<String> {
     let sha256 = crate::util::sha256_hex(bytes);
-    let path = crate::files::file_path(&ctx.data_dir, &sha256);
+    let path = crate::files::file_path(&ctx.data_dir, &sha256)?;
     if !path.exists() {
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;

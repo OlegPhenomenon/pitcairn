@@ -380,7 +380,7 @@ pub async fn export_project(
             if let Some(sha) = row["sha256"].as_str().map(str::to_string) {
                 row.insert(
                     "storage_key".into(),
-                    Value::from(format!("files/{}/{}", &sha[0..2], sha)),
+                    Value::from(crate::files::storage_rel(&sha)?),
                 );
                 file_shas.push(sha.to_string());
             }
@@ -631,16 +631,17 @@ pub fn parse_archive(bytes: &[u8], max_upload_bytes: u64) -> AppResult<ParsedArc
         .ok_or_else(|| AppError::unprocessable("bad_archive", "manifest.json missing"))?;
     let manifest: Map<String, Value> = serde_json::from_slice(&manifest_bytes)
         .map_err(|e| AppError::unprocessable("bad_archive", format!("manifest.json: {e}")))?;
-    if manifest["format"].as_str() != Some(FORMAT) {
+    if cell(&manifest, "format").as_str() != Some(FORMAT) {
         return Err(AppError::unprocessable(
             "bad_archive",
             "not a pitcairn project export",
         ));
     }
-    if manifest["schema_version"].as_i64() != Some(SCHEMA_VERSION) {
+    let schema_version = cell(&manifest, "schema_version");
+    if schema_version.as_i64() != Some(SCHEMA_VERSION) {
         return Err(AppError::unprocessable(
             "unknown_schema_version",
-            format!("unsupported schema_version {}", manifest["schema_version"]),
+            format!("unsupported schema_version {schema_version}"),
         ));
     }
     if records.get("projects").map(|r| r.len()) != Some(1) {
@@ -649,12 +650,221 @@ pub fn parse_archive(bytes: &[u8], max_upload_bytes: u64) -> AppResult<ParsedArc
             "archive must contain exactly one project",
         ));
     }
+    validate_records(&records, &files)?;
 
     Ok(ParsedArchive {
         manifest,
         records,
         files,
     })
+}
+
+/// Where a reference column must point: the archive's own project, or a row
+/// of another project-scoped table carried in the same archive.
+enum Parent {
+    Project,
+    Table(&'static str),
+}
+
+/// Every reference a project-scoped row holds to another project-scoped row.
+/// Each must resolve inside the archive — never to a row of a project that
+/// already exists on this install (§8).
+const PROJECT_REFS: &[(&str, &str, Parent)] = &[
+    ("project_sites", "project_id", Parent::Project),
+    ("project_members", "project_id", Parent::Project),
+    ("project_revisions", "project_id", Parent::Project),
+    ("invitations", "project_id", Parent::Project),
+    ("documents", "project_id", Parent::Project),
+    (
+        "document_versions",
+        "document_id",
+        Parent::Table("documents"),
+    ),
+    ("document_versions", "file_id", Parent::Table("files")),
+    ("threads", "project_id", Parent::Project),
+    ("messages", "thread_id", Parent::Table("threads")),
+    ("action_items", "project_id", Parent::Project),
+    ("action_items", "thread_id", Parent::Table("threads")),
+    ("review_assignments", "project_id", Parent::Project),
+    (
+        "review_assignments",
+        "project_revision_id",
+        Parent::Table("project_revisions"),
+    ),
+    ("change_requests", "project_id", Parent::Project),
+    (
+        "change_requests",
+        "resulting_decision_id",
+        Parent::Table("decisions"),
+    ),
+    ("decisions", "project_id", Parent::Project),
+    (
+        "decisions",
+        "project_revision_id",
+        Parent::Table("project_revisions"),
+    ),
+    (
+        "decisions",
+        "document_version_id",
+        Parent::Table("document_versions"),
+    ),
+    ("decisions", "supersedes_id", Parent::Table("decisions")),
+    ("decisions", "superseded_by_id", Parent::Table("decisions")),
+    (
+        "decisions",
+        "change_request_id",
+        Parent::Table("change_requests"),
+    ),
+    ("trips", "project_id", Parent::Project),
+    ("bookings", "trip_id", Parent::Table("trips")),
+    ("invoices", "project_id", Parent::Project),
+    ("invoice_lines", "invoice_id", Parent::Table("invoices")),
+    ("invoice_lines", "booking_id", Parent::Table("bookings")),
+    ("payments", "invoice_id", Parent::Table("invoices")),
+    ("deliverables", "project_id", Parent::Project),
+    (
+        "deliverable_due_changes",
+        "deliverable_id",
+        Parent::Table("deliverables"),
+    ),
+    (
+        "deliverable_submissions",
+        "deliverable_id",
+        Parent::Table("deliverables"),
+    ),
+    (
+        "submission_files",
+        "submission_id",
+        Parent::Table("deliverable_submissions"),
+    ),
+    (
+        "submission_files",
+        "document_version_id",
+        Parent::Table("document_versions"),
+    ),
+    (
+        "external_links",
+        "submission_id",
+        Parent::Table("deliverable_submissions"),
+    ),
+    (
+        "publication_files",
+        "deliverable_id",
+        Parent::Table("deliverables"),
+    ),
+    (
+        "publication_files",
+        "document_version_id",
+        Parent::Table("document_versions"),
+    ),
+    ("samples", "project_id", Parent::Project),
+    ("samples", "site_id", Parent::Table("project_sites")),
+    ("measurements", "project_id", Parent::Project),
+    (
+        "measurements",
+        "deliverable_id",
+        Parent::Table("deliverables"),
+    ),
+    (
+        "measurements",
+        "submission_id",
+        Parent::Table("deliverable_submissions"),
+    ),
+    ("notifications", "project_id", Parent::Project),
+    ("audit_events", "project_id", Parent::Project),
+];
+
+/// A row cell, `Null` when absent (archive rows are untrusted JSON objects).
+fn cell<'a>(row: &'a Map<String, Value>, key: &str) -> &'a Value {
+    row.get(key).unwrap_or(&Value::Null)
+}
+
+fn str_cell<'a>(row: &'a Map<String, Value>, key: &str) -> &'a str {
+    cell(row, key).as_str().unwrap_or_default()
+}
+
+/// Structural validation of the archive records (§8), before anything is
+/// written: every row of the project graph belongs to the imported project
+/// or to a row of the same archive, and every file row names verified bytes
+/// carried in the archive with a matching size.
+fn validate_records(
+    records: &BTreeMap<String, Vec<Map<String, Value>>>,
+    files: &BTreeMap<String, Vec<u8>>,
+) -> AppResult<()> {
+    let unsafe_archive = |msg: String| AppError::unprocessable("unsafe_archive", msg);
+    let rows_of = |table: &str| records.get(table).map(Vec::as_slice).unwrap_or_default();
+
+    let project_id = str_cell(&records["projects"][0], "id");
+    if project_id.is_empty() {
+        return Err(unsafe_archive("project row without id".into()));
+    }
+
+    // Row ids per project-scoped table (plus files), all required.
+    let mut ids: HashMap<&str, HashSet<&str>> = HashMap::new();
+    for table in project_tables().chain(["files"]) {
+        let set = ids.entry(table).or_default();
+        for row in rows_of(table) {
+            let id = str_cell(row, "id");
+            if id.is_empty() {
+                return Err(unsafe_archive(format!("{table} row without id")));
+            }
+            set.insert(id);
+        }
+    }
+
+    for (table, column, parent) in PROJECT_REFS {
+        for row in rows_of(table) {
+            let value = cell(row, column);
+            let ok = match parent {
+                Parent::Project => value.as_str() == Some(project_id),
+                Parent::Table(t) => {
+                    value.is_null() || value.as_str().is_some_and(|v| ids[t].contains(v))
+                }
+            };
+            if !ok {
+                return Err(unsafe_archive(format!(
+                    "{table}.{column} references a row outside the imported project"
+                )));
+            }
+        }
+    }
+
+    for row in rows_of("files") {
+        let sha = str_cell(row, "sha256");
+        if !crate::files::is_sha256_hex(sha) {
+            return Err(unsafe_archive(format!(
+                "file {} has an invalid sha256",
+                str_cell(row, "id")
+            )));
+        }
+        let Some(bytes) = files.get(sha) else {
+            return Err(AppError::unprocessable(
+                "missing_file",
+                format!("file {sha} is listed without its bytes"),
+            ));
+        };
+        if cell(row, "size").as_i64() != Some(bytes.len() as i64) {
+            return Err(AppError::unprocessable(
+                "checksum_mismatch",
+                format!("file {sha} size does not match its bytes"),
+            ));
+        }
+    }
+
+    // User stubs are remapped by value: a stub id equal to a project row id
+    // would rewrite validated references.
+    for stub in rows_of("users") {
+        let id = str_cell(stub, "id");
+        if id.is_empty() || str_cell(stub, "email").is_empty() {
+            return Err(unsafe_archive("user stub without id or email".into()));
+        }
+        if id == project_id || ids.values().any(|set| set.contains(id)) {
+            return Err(unsafe_archive(format!(
+                "user stub {id} collides with a project row id"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// What preview (and the DTO) reports about an archive.
@@ -674,9 +884,9 @@ pub async fn preview_archive(
     parsed: &ParsedArchive,
 ) -> AppResult<ArchivePreview> {
     let project = &parsed.records["projects"][0];
-    let project_id = project["id"].as_str().unwrap_or_default().to_string();
-    let reference = project["reference"].as_str().map(String::from);
-    let title = project["title"].as_str().unwrap_or_default().to_string();
+    let project_id = str_cell(project, "id").to_string();
+    let reference = cell(project, "reference").as_str().map(String::from);
+    let title = str_cell(project, "title").to_string();
 
     let mut conflicts = Vec::new();
     let by_id: Option<String> = sqlx::query_scalar("SELECT reference FROM projects WHERE id = ?")
@@ -706,7 +916,7 @@ pub async fn preview_archive(
     let mut new = Vec::new();
     if let Some(users) = parsed.records.get("users") {
         for stub in users {
-            let email = stub["email"].as_str().unwrap_or_default();
+            let email = str_cell(stub, "email");
             let exists: Option<String> = sqlx::query_scalar("SELECT id FROM users WHERE email = ?")
                 .bind(email)
                 .fetch_optional(pool)
@@ -749,7 +959,7 @@ pub struct ImportOutcome {
 
 /// File bytes land in content-addressed storage before the DB transaction.
 async fn store_file_bytes(data_dir: &Path, sha256: &str, bytes: &[u8]) -> AppResult<PathBuf> {
-    let target = crate::files::file_path(data_dir, sha256);
+    let target = crate::files::file_path(data_dir, sha256)?;
     if let Some(parent) = target.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -889,8 +1099,8 @@ pub async fn commit_archive(
     batch_id: Option<&str>,
 ) -> AppResult<ImportOutcome> {
     let project = &parsed.records["projects"][0];
-    let project_id = project["id"].as_str().unwrap_or_default().to_string();
-    let reference = project["reference"].as_str().map(String::from);
+    let project_id = str_cell(project, "id").to_string();
+    let reference = cell(project, "reference").as_str().map(String::from);
 
     // Write file bytes first (content-addressed; stray bytes are harmless).
     for (sha, bytes) in &parsed.files {
@@ -962,10 +1172,10 @@ pub async fn commit_archive(
     // users stubs — matched by email, created disabled, never roles/secrets.
     if let Some(users) = parsed.records.get("users") {
         for stub in users {
-            let old_id = stub["id"].as_str().unwrap_or_default().to_string();
-            let email = stub["email"].as_str().unwrap_or_default();
-            let name = stub["name"].as_str().unwrap_or_default();
-            let org = stub["organisation"].as_str().unwrap_or_default();
+            let old_id = str_cell(stub, "id").to_string();
+            let email = str_cell(stub, "email");
+            let name = str_cell(stub, "name");
+            let org = str_cell(stub, "organisation");
             let existing: Option<(String, String)> =
                 sqlx::query_as("SELECT id, email FROM users WHERE id = ? OR email = ?")
                     .bind(&old_id)
@@ -998,8 +1208,8 @@ pub async fn commit_archive(
     // templates + template_versions (matched by key/version).
     if let Some(templates) = parsed.records.get("templates") {
         for t in templates {
-            let old_id = t["id"].as_str().unwrap_or_default();
-            let key = t["key"].as_str().unwrap_or_default();
+            let old_id = str_cell(t, "id");
+            let key = str_cell(t, "key");
             let existing: Option<String> =
                 sqlx::query_scalar("SELECT id FROM templates WHERE id = ? OR key = ?")
                     .bind(old_id)
@@ -1014,7 +1224,7 @@ pub async fn commit_archive(
     }
     if let Some(versions) = parsed.records.get("template_versions") {
         for tv in versions {
-            let old_id = tv["id"].as_str().unwrap_or_default().to_string();
+            let old_id = str_cell(tv, "id").to_string();
             if let Some(m) =
                 sqlx::query_scalar::<_, String>("SELECT id FROM template_versions WHERE id = ?")
                     .bind(&old_id)
@@ -1030,16 +1240,16 @@ pub async fn commit_archive(
                 .get("templates")
                 .and_then(|ts| {
                     ts.iter()
-                        .find(|t| t["id"].as_str() == tv["template_id"].as_str())
+                        .find(|t| cell(t, "id").as_str() == cell(tv, "template_id").as_str())
                 })
-                .and_then(|t| t["key"].as_str().map(String::from));
+                .and_then(|t| cell(t, "key").as_str().map(String::from));
             let existing_tv: Option<String> = if let Some(key) = &template_key {
                 sqlx::query_scalar(
                     "SELECT tv.id FROM template_versions tv JOIN templates t ON t.id = tv.template_id
                      WHERE t.key = ? AND tv.version = ?",
                 )
                 .bind(key)
-                .bind(tv["version"].as_i64().unwrap_or(0))
+                .bind(cell(tv, "version").as_i64().unwrap_or(0))
                 .fetch_optional(&mut *tx)
                 .await?
             } else {
@@ -1071,7 +1281,7 @@ pub async fn commit_archive(
     // resources + tariffs (same id reused if free).
     if let Some(resources) = parsed.records.get("resources") {
         for r in resources {
-            let old_id = r["id"].as_str().unwrap_or_default().to_string();
+            let old_id = str_cell(r, "id").to_string();
             if table_exists_row(&mut tx, "resources", &old_id).await? {
                 maps.resources.insert(old_id.clone(), old_id);
                 continue;
@@ -1083,7 +1293,7 @@ pub async fn commit_archive(
     }
     if let Some(tariffs) = parsed.records.get("tariffs") {
         for t in tariffs {
-            if let Some(id) = t["id"].as_str()
+            if let Some(id) = cell(t, "id").as_str()
                 && table_exists_row(&mut tx, "tariffs", id).await?
             {
                 continue;
@@ -1094,10 +1304,11 @@ pub async fn commit_archive(
     }
 
     // files metadata — dedup by sha256 (the id may differ across installs).
+    // `parse_archive` verified every sha256 shape, size and byte payload.
     if let Some(files) = parsed.records.get("files") {
         for f in files {
-            let old_id = f["id"].as_str().unwrap_or_default().to_string();
-            let sha = f["sha256"].as_str().unwrap_or_default();
+            let old_id = str_cell(f, "id").to_string();
+            let sha = str_cell(f, "sha256");
             let existing: Option<String> =
                 sqlx::query_scalar("SELECT id FROM files WHERE sha256 = ?")
                     .bind(sha)
@@ -1107,14 +1318,31 @@ pub async fn commit_archive(
                 maps.files.insert(old_id, id);
                 continue;
             }
+            let bytes = parsed.files.get(sha).ok_or_else(|| {
+                AppError::unprocessable("missing_file", format!("file {sha} has no bytes"))
+            })?;
             let mut row = f.clone();
             row.insert(
                 "storage_key".into(),
                 Value::from(
-                    crate::files::file_path(data_dir, sha)
+                    crate::files::file_path(data_dir, sha)?
                         .to_string_lossy()
                         .to_string(),
                 ),
+            );
+            // Never trust the archive's scan verdict: scan the verified bytes.
+            let detail = crate::jobs::scan_bytes(bytes, str_cell(f, "mime"));
+            row.insert(
+                "scan_status".into(),
+                Value::from(if detail.is_none() {
+                    "clean"
+                } else {
+                    "rejected"
+                }),
+            );
+            row.insert(
+                "scan_detail".into(),
+                detail.map(Value::from).unwrap_or(Value::Null),
             );
             // If a different file somehow already owns this id, mint a new one.
             if table_exists_row(&mut tx, "files", &old_id).await? {

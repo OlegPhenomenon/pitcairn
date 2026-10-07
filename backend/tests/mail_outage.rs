@@ -6,7 +6,6 @@ use common::{persona, spawn_app};
 async fn role_grant_queues_email_and_notification_survives_mail_outage() {
     let app = spawn_app(true).await;
     let admin = persona(&app, "admin").await;
-    let helen = persona(&app, "helen").await;
 
     let settings: pitcairn::dto::SettingsDto =
         admin.json(admin.get("/api/v1/admin/settings").await).await;
@@ -22,7 +21,8 @@ async fn role_grant_queues_email_and_notification_survives_mail_outage() {
         .unwrap();
     let ruth_id = ruth_id.0;
 
-    let grant = helen
+    // Only an admin grants roles other than decision_maker (§3).
+    let grant = admin
         .post_json(
             &format!("/api/v1/admin/users/{ruth_id}/roles"),
             &serde_json::json!({"role": "provider"}),

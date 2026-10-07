@@ -77,6 +77,13 @@ async fn summary(
     if access == ProjectAccess::None {
         return Err(AppError::NotFound);
     }
+    // Same rule as the workspace: base managers / finance get the project
+    // summary only, never the application answers.
+    if !crate::routes::projects::reads_application(&actor, access) {
+        return Err(AppError::forbidden(
+            "you do not have access to this application",
+        ));
+    }
 
     let row: Option<(String, String, String, String)> = sqlx::query_as(
         "SELECT p.title, p.summary, p.answers_json, tv.schema_json

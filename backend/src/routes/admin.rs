@@ -361,6 +361,26 @@ async fn patch_user(
     Ok(Json(load_user_dto(&state.pool, &user_id).await?))
 }
 
+/// Separation of duties (§3): only a decision_maker grants or revokes
+/// `decision_maker`; every other role is admin business (an admin can never
+/// touch `decision_maker`, a decision_maker without admin nothing else).
+/// `denied_code` is the 403 code for a non-decision_maker touching
+/// `decision_maker`.
+fn require_role_manager(actor: &Actor, role: &str, verb: &str, denied_code: &str) -> AppResult<()> {
+    if role == "decision_maker" {
+        if actor.has_role("decision_maker") {
+            Ok(())
+        } else {
+            Err(AppError::Forbidden {
+                code: denied_code.into(),
+                message: format!("only a decision_maker can {verb} decision_maker"),
+            })
+        }
+    } else {
+        authz::require_role(actor, &["admin"])
+    }
+}
+
 fn validate_role(role: &str) -> AppResult<()> {
     if ROLES.contains(&role) {
         Ok(())
@@ -388,12 +408,7 @@ async fn grant_role(
         return Err(AppError::NotFound);
     }
 
-    if req.role == "decision_maker" && !actor.has_role("decision_maker") {
-        return Err(AppError::Forbidden {
-            code: "cannot_grant_decision_maker".into(),
-            message: "only a decision_maker can grant decision_maker".into(),
-        });
-    }
+    require_role_manager(&actor, &req.role, "grant", "cannot_grant_decision_maker")?;
 
     let active: Option<(String,)> = sqlx::query_as(
         "SELECT user_id FROM user_roles
@@ -423,6 +438,24 @@ async fn grant_role(
     .execute(&mut *tx)
     .await?;
 
+    // Gaining the first MFA role: every existing session of the user must
+    // verify TOTP before the new role works (none may ride on a session that
+    // was opened when MFA was not required).
+    if authz::role_requires_mfa(&req.role) {
+        let held: Vec<String> = sqlx::query_scalar(
+            "SELECT role FROM user_roles WHERE user_id = ? AND revoked_at IS NULL",
+        )
+        .bind(&user_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let first_mfa_role = held.iter().filter(|r| authz::role_requires_mfa(r)).count() == 1;
+        if first_mfa_role {
+            sqlx::query("UPDATE sessions SET mfa_verified = 0 WHERE user_id = ?")
+                .bind(&user_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
     audit::record(
         &mut tx,
         AuditEvent {
@@ -466,12 +499,7 @@ async fn revoke_role(
 ) -> AppResult<Json<UserDto>> {
     validate_role(&role)?;
 
-    if role == "decision_maker" && !actor.has_role("decision_maker") {
-        return Err(AppError::Forbidden {
-            code: "protected_role".into(),
-            message: "only a decision_maker can revoke decision_maker".into(),
-        });
-    }
+    require_role_manager(&actor, &role, "revoke", "protected_role")?;
 
     let mut tx = db::begin_immediate(&state.pool).await?;
     let now = now_rfc3339();

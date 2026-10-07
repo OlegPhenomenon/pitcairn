@@ -50,6 +50,8 @@ pub struct AppState {
     pub mail: Arc<dyn MailTransport>,
     pub upload_locks: UploadLocks,
     pub login_limiter: Arc<ratelimit::RateLimiter>,
+    /// Admin imports buffer whole CSV/ZIP bodies: one at a time.
+    pub import_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -63,6 +65,7 @@ impl AppState {
                 std::time::Duration::from_secs(60),
                 10,
             )),
+            import_slots: Arc::new(tokio::sync::Semaphore::new(1)),
         }
     }
 
